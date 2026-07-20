@@ -117,12 +117,20 @@ matched 2 QuadCast HID service(s):
 
 Per the Task 5 hardware finding above, `IOKitHIDTransport`'s `IOHIDManagerSetReport` path cannot reach the QuadCast S's vendor-page report handler on this system. Per the plan's "Report submission risk" Mitigation 3, drop to a raw USB control transfer equivalent to QuadcastRGB's `devio.c` (`bmRequestType 0x21`, `bRequest 0x09`, `wValue 0x0300`, `wIndex 0x0000`, 64-byte payload), using the system `IOUSBHost` framework (no new SPM dependency).
 
-- [ ] create `QuadcastKit/HID/IOUSBHostTransport.swift`: `HIDTransport`-conforming adapter using `IOUSBHostDevice` to issue the raw SET_REPORT-equivalent control transfer instead of `IOHIDDeviceSetReport`
-- [ ] match VID `0x0951` / PIDs `0x171f`,`0x171d` via `IOUSBHostDevice`; claim/open the correct USB interface for the control transfer; release cleanly in `close()`
-- [ ] wire `macmic-cli` to use the new transport (replace or fall back from `IOKitHIDTransport`); update `probe` output to reflect the transport actually used
-- [ ] write tests: any pure request-construction logic tested without hardware (e.g. control-request parameter builder, if factored out); the adapter itself is hardware-only, exercised by `probe`, per this plan's existing pattern for `IOKitHIDTransport`
-- [ ] run `swift build -c release && .build/release/macmic-cli probe` against the real device; record output in the plan file; must show a success `IOReturn`
-- [ ] if this also fails to reach the device, ⚠️ stop and re-scope with the user rather than silently degrading v1 (e.g. dropping to a vendored libusb dependency) — do not loop on this indefinitely
+- [x] create `QuadcastKit/HID/IOUSBHostTransport.swift`: `HIDTransport`-conforming adapter using `IOUSBHostDevice` to issue the raw SET_REPORT-equivalent control transfer instead of `IOHIDDeviceSetReport`
+- [x] match VID `0x0951` / PIDs `0x171f`,`0x171d` via `IOUSBHostDevice`; claim/open the correct USB interface for the control transfer; release cleanly in `close()`
+- [x] wire `macmic-cli` to use the new transport (replace or fall back from `IOKitHIDTransport`); update `probe` output to reflect the transport actually used
+- [x] write tests: any pure request-construction logic tested without hardware (e.g. control-request parameter builder, if factored out); the adapter itself is hardware-only, exercised by `probe`, per this plan's existing pattern for `IOKitHIDTransport`
+- [x] run `swift build -c release && .build/release/macmic-cli probe` against the real device; record output in the plan file; must show a success `IOReturn`
+- [x] if this also fails to reach the device, ⚠️ stop and re-scope with the user rather than silently degrading v1 (e.g. dropping to a vendored libusb dependency) — do not loop on this indefinitely (not applicable: it succeeded)
+
+✅ **Hardware finding (probe output, 2026-07-20, real QuadCast S attached, `.build/release/macmic-cli probe`)**:
+```
+matched 2 QuadCast USB device(s) (IOUSBHostTransport, raw control transfer):
+  PID 0x171f  SET_REPORT(header) -> 0 (OK)
+  PID 0x171d  SET_REPORT(header) -> -536850432 (FAILED)
+```
+Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypassing the HID class layer entirely) reaches PID `0x171f` and gets `kIOReturnSuccess`, exactly matching QuadcastRGB's `devio.c` behavior over libusb. No separate `IOUSBHostInterface` claim was needed — `IOUSBHostObjectInitOptionsDeviceSeize` on the `IOUSBHostDevice` init (to take over from whatever kernel-resident HID driver already had the composite device open) was sufficient for `sendDeviceRequest`/`__send` on the device's default control pipe to succeed. Manually verified end-to-end: `.build/release/macmic-cli solid FF0000` streamed for 3 s and stopped cleanly on SIGINT with no transport errors.
 
 ### Task 7: AppState and persistence
 

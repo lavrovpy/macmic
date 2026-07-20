@@ -25,15 +25,20 @@ func fail(_ message: String) -> Never {
     exit(1)
 }
 
-/// Opens the transport and gives `IOHIDManager`'s async device-matching
-/// callbacks a moment to enumerate already-connected QuadCast HID services
-/// before we act on `matchedDevices`.
-func openAndWaitForEnumeration() -> IOKitHIDTransport {
-    let transport = IOKitHIDTransport()
+/// Opens the transport and gives the async device-matching notification a
+/// moment to enumerate already-connected QuadCast USB devices before we act
+/// on them.
+///
+/// Uses `IOUSBHostTransport` (raw USB control transfers), not
+/// `IOKitHIDTransport`: per the Task 5 hardware finding, `IOHIDManager`
+/// cannot reach the QuadCast S's vendor-page report handler on this system,
+/// while a raw control transfer via `IOUSBHostDevice` does.
+func openAndWaitForEnumeration() -> IOUSBHostTransport {
+    let transport = IOUSBHostTransport()
     do {
         try transport.open()
     } catch {
-        fail("failed to open HID manager: \(error)")
+        fail("failed to open USB host transport: \(error)")
     }
     Thread.sleep(forTimeInterval: 0.3)
     return transport
@@ -108,14 +113,13 @@ case "probe":
     let transport = openAndWaitForEnumeration()
     do {
         let results = try transport.probe()
-        print("matched \(results.count) QuadCast HID service(s):")
+        print("matched \(results.count) QuadCast USB device(s) (IOUSBHostTransport, raw control transfer):")
         var anySucceeded = false
         for result in results {
             anySucceeded = anySucceeded || result.succeeded
             let status = result.succeeded ? "OK" : "FAILED"
             let pid = String(format: "0x%04x", result.productID)
-            let page = String(format: "0x%04x", result.usagePage)
-            print("  PID \(pid)  usagePage \(page)  SetReport(header) -> \(result.ioReturn) (\(status))")
+            print("  PID \(pid)  SET_REPORT(header) -> \(result.ioReturn) (\(status))")
         }
         transport.close()
         exit(anySucceeded ? 0 : 1)
