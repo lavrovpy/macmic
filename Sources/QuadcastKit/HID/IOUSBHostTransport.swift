@@ -89,26 +89,30 @@ public final class IOUSBHostTransport: HIDTransport {
         handleRemoved(removalIterator)
     }
 
+    /// Tears down notifications and devices in a single `queue.sync` so a
+    /// matched/removed notification already scheduled on `queue` can't run
+    /// between the iterator/port teardown and the device teardown and add an
+    /// entry to `devicesByEntryID` that never gets `destroy()`-ed.
     public func close() {
         queue.sync {
+            if matchIterator != 0 {
+                IOObjectRelease(matchIterator)
+                matchIterator = 0
+            }
+            if removalIterator != 0 {
+                IOObjectRelease(removalIterator)
+                removalIterator = 0
+            }
+            if let notificationPort {
+                IONotificationPortDestroy(notificationPort)
+            }
+            notificationPort = nil
             for device in devicesByEntryID.values {
                 device.destroy()
             }
             devicesByEntryID.removeAll()
             activeEntryID = nil
         }
-        if matchIterator != 0 {
-            IOObjectRelease(matchIterator)
-            matchIterator = 0
-        }
-        if removalIterator != 0 {
-            IOObjectRelease(removalIterator)
-            removalIterator = 0
-        }
-        if let notificationPort {
-            IONotificationPortDestroy(notificationPort)
-        }
-        notificationPort = nil
     }
 
     /// Runs on `queue` for its whole duration (not just the candidate

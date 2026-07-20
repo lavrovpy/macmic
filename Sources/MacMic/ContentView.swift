@@ -34,7 +34,7 @@ struct ContentView: View {
                 .disabled(!state.controlsEnabled)
 
             HStack {
-                Button("Solid") { state.solidColor = state.solidColor }
+                Button("Solid") { state.mode = .solid(state.lastSolidColor) }
                 Button("Rainbow Cycle") { state.mode = .cycle(speed: AppState.defaultPresetSpeed) }
                 Button("Blink") {
                     state.mode = .blink(colors: [rgbColor(from: state.solidColor)], speed: AppState.defaultPresetSpeed)

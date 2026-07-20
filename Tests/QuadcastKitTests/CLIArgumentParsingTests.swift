@@ -30,6 +30,10 @@ import Testing
         #expect(parseSpeed([]) == 50)
     }
 
+    @Test func parseSpeedDefaultsToFiftyWhenValueIsNotANumber() {
+        #expect(parseSpeed(["--speed", "fast"]) == 50)
+    }
+
     @Test func colorArgumentsStripsFlagsAndTheirValues() {
         #expect(colorArguments(["FF0000", "--speed", "40", "00FF00"]) == ["FF0000", "00FF00"])
     }

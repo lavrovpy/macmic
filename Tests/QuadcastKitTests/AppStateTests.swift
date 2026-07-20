@@ -207,4 +207,14 @@ import Testing
 
         #expect(state.mode == .solid(RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)))
     }
+
+    @Test func corruptedPersistedLastSolidColorFallsBackToDefault() throws {
+        let defaults = Self.freshDefaults()
+        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.lastSolidColor")
+        defaults.set(try! JSONEncoder().encode(LightMode.cycle(speed: 50)), forKey: "dev.alavreniuk.macmic.mode")
+
+        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
+
+        #expect(state.lastSolidColor == RGBColor(r: 0xFF, g: 0xFF, b: 0xFF))
+    }
 }

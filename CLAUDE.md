@@ -16,6 +16,7 @@ swift build -c release            # release build (needed for the app bundle and
 swift test                        # run the full QuadcastKitTests suite
 swift test --filter FrameTests    # run one test suite
 ./scripts/make-app.sh             # release build + assemble dist/MacMic.app (ad-hoc signed)
+./scripts/test-make-app.sh        # shellchecks make-app.sh, runs it, asserts the built bundle looks right
 swift run macmic-cli probe        # hardware diagnostic: lists matched USB services + which accepts control transfers
 ```
 
@@ -76,6 +77,7 @@ This is important context for any future protocol/transport work — see the pla
 - The device does not persist color — streaming must never stop while lighting should stay on. `FrameStreamer` is a resident 55 ms loop, not a fire-and-forget configurator.
 - `HIDTransport.open()` succeeding only means matching notifications were registered, not that a device is present: `IOUSBHostTransport` reports an already-matched device asynchronously via `onDeviceConnected` (`handleMatched` hops queue → main). `AppState.isConnected` must be set from that callback, never assumed true right after `open()` returns — see the `deviceAbsentAtLaunchLeavesStateDisconnected` regression test.
 - `AppState.applyEnabledState()` must gate on `isConnected` as well as `isEnabled`: a `mode`/`brightness` change racing a hotplug-removal notification must not resume the streamer against a device that just disappeared.
+- `FrameStreamer.setMode()` only resets `frameIndex` to 0 when `LightMode` itself changes, not on brightness-only calls: `AppState.applyEnabledState()` calls `setMode` on every brightness change too (e.g. once per `Slider` drag tick), so without this a `.cycle`/`.blink` animation would restart from frame 0 on every tick of the brightness slider instead of just dimming in place — see the `brightnessOnlyChangeDoesNotResetPlaybackPosition` regression test.
 
 ## Conventions
 

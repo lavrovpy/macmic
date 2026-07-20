@@ -29,10 +29,11 @@ import Testing
     }
 
     @Test func cycleFrameCountMatchesReferenceFormulaAtDefaultSpeed() {
-        let speed = 50
-        let frames = PresetSequencer.frames(for: .cycle(speed: speed))
-        let expectedLength = PresetSequencer.transitionLength(speed: speed)
-        #expect(frames.count == expectedLength * PresetSequencer.rainbowPalette.count)
+        let frames = PresetSequencer.frames(for: .cycle(speed: 50))
+        // Independently derived from get_gradient_length, not by calling
+        // transitionLength(speed:) itself: 12 + (128 - 12) * (100 - 50) / 100
+        // = 70 frames per transition, times 6 palette colors = 420.
+        #expect(frames.count == 420)
     }
 
     @Test func cycleSequenceStartsAtFirstPaletteColor() {

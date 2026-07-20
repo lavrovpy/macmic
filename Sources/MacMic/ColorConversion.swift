@@ -15,7 +15,10 @@ import SwiftUI
 /// direct RGB accessor). Pure and hardware-independent so it's testable
 /// without a menu bar.
 func rgbColor(from color: Color) -> QuadcastKit.RGBColor {
-    let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? NSColor(color)
+    // `.white` is always component-convertible, unlike the raw `NSColor`,
+    // which can be a pattern/catalog color that traps on `.redComponent`
+    // if `usingColorSpace` fails to convert it.
+    let nsColor = NSColor(color).usingColorSpace(.sRGB) ?? .white
     func channel(_ value: CGFloat) -> UInt8 {
         UInt8(min(max((value * 255).rounded(), 0), 255))
     }
