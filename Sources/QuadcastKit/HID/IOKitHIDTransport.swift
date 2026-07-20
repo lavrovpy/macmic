@@ -10,6 +10,16 @@ import Foundation
 import IOKit
 import IOKit.hid
 
+/// One matched QuadCast HID service's response to a header-packet feature
+/// report, as reported by `IOKitHIDTransport.probe()`.
+public struct ProbeResult: Equatable {
+    public let productID: Int
+    public let usagePage: Int
+    public let ioReturn: IOReturn
+
+    public var succeeded: Bool { ioReturn == kIOReturnSuccess }
+}
+
 /// `HIDTransport` backed by `IOHIDManager`.
 ///
 /// The QuadCast S enumerates as VID `0x0951` with two simultaneous USB
@@ -105,6 +115,32 @@ public final class IOKitHIDTransport: HIDTransport {
 
     private func productID(of device: IOHIDDevice) -> Int {
         (IOHIDDeviceGetProperty(device, kIOHIDProductIDKey as CFString) as? Int) ?? -1
+    }
+
+    private func usagePage(of device: IOHIDDevice) -> Int {
+        (IOHIDDeviceGetProperty(device, kIOHIDPrimaryUsagePageKey as CFString) as? Int) ?? -1
+    }
+
+    /// Sends a header-packet feature report to every currently matched
+    /// QuadCast HID service and reports the raw `IOReturn` for each,
+    /// regardless of success. This is the hardware bring-up diagnostic
+    /// (`macmic-cli probe`); unlike `sendFeatureReport`, it does not stop at
+    /// the first success and is not exercised by unit tests.
+    public func probe() throws -> [ProbeResult] {
+        let devices = queue.sync { matchedDevices }
+        guard !devices.isEmpty else {
+            throw HIDTransportError.deviceNotFound
+        }
+        return devices.map { device in
+            var packet = QuadcastPacket.headerPacket()
+            let result = packet.withUnsafeMutableBytes { buffer -> IOReturn in
+                guard let base = buffer.bindMemory(to: UInt8.self).baseAddress else {
+                    return kIOReturnError
+                }
+                return IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, CFIndex(0), base, buffer.count)
+            }
+            return ProbeResult(productID: productID(of: device), usagePage: usagePage(of: device), ioReturn: result)
+        }
     }
 
     private func handleDeviceMatched(_ device: IOHIDDevice) {

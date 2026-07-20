@@ -98,40 +98,59 @@ Port sequence generation from `reference/QuadcastRGB/modules/rgbmodes.c` (`seque
 
 ### Task 5: FrameStreamer and hardware smoke-test CLI
 
-- [ ] create `QuadcastKit/FrameStreamer.swift`: owns a `DispatchSourceTimer` at 55 ms; each tick sends header packet then the next data packet from the current frame sequence (looping); `func setMode(_ mode: LightMode, brightness: Double)` swaps sequences atomically; `start() / stop()`; on transport error, stop and surface via callback
-- [ ] implement `macmic-cli`: `macmic-cli solid <hex> [--brightness N]`, `macmic-cli cycle [--speed N]`, `macmic-cli blink <hex>...`, `macmic-cli probe` (lists matched QuadCast HID services and reports which accepts feature reports); runs the streamer until Ctrl-C
-- [ ] `probe` must print per-service results (PID, usage page, IOReturn of a header-packet SetReport) — this is the hardware bring-up diagnostic
-- [ ] write tests with MockHIDTransport: streamer sends header+data pairs in order, loops the sequence, `setMode` swaps cleanly mid-stream, stops on error, `stop()` ceases sends
-- [ ] run `swift test` - must pass; run `swift build -c release` to confirm CLI links against IOKit
-- [ ] run `.build/release/macmic-cli probe` — record output in the plan file; at least one service must accept SetReport with `kIOReturnSuccess` (⚠️ if all fail, investigate report ID `0x2A` / interface fallback per Technical Details before proceeding)
+- [x] create `QuadcastKit/FrameStreamer.swift`: owns a `DispatchSourceTimer` at 55 ms; each tick sends header packet then the next data packet from the current frame sequence (looping); `func setMode(_ mode: LightMode, brightness: Double)` swaps sequences atomically; `start() / stop()`; on transport error, stop and surface via callback
+- [x] implement `macmic-cli`: `macmic-cli solid <hex> [--brightness N]`, `macmic-cli cycle [--speed N]`, `macmic-cli blink <hex>...`, `macmic-cli probe` (lists matched QuadCast HID services and reports which accepts feature reports); runs the streamer until Ctrl-C
+- [x] `probe` must print per-service results (PID, usage page, IOReturn of a header-packet SetReport) — this is the hardware bring-up diagnostic
+- [x] write tests with MockHIDTransport: streamer sends header+data pairs in order, loops the sequence, `setMode` swaps cleanly mid-stream, stops on error, `stop()` ceases sends
+- [x] run `swift test` - must pass; run `swift build -c release` to confirm CLI links against IOKit
+- [x] run `.build/release/macmic-cli probe` — record output in the plan file; at least one service must accept SetReport with `kIOReturnSuccess` (⚠️ if all fail, investigate report ID `0x2A` / interface fallback per Technical Details before proceeding) — ran against the real QuadCast S; **both mitigations from Technical Details were tried and exhausted (see ⚠️ note below); success criterion not met on this transport, follow-up is Task 6**
 
-### Task 6: AppState and persistence
+⚠️ **Hardware finding (probe output, 2026-07-20, real QuadCast S attached)**:
+```
+matched 2 QuadCast HID service(s):
+  PID 0x171f  usagePage 0x000c  SetReport(header) -> -536850432 (FAILED)
+  PID 0x171d  usagePage 0x000c  SetReport(header) -> -536850432 (FAILED)
+```
+`-536850432` = `0xE0005000` (an IOKit `IOReturn` rejection code) on both matched services. Diagnosis: on this macOS install, `IOHIDManager` VID/PID matching only surfaces one `IOHIDDevice` per PID, and it's the **Consumer Control** interface (`kIOHIDPrimaryUsagePageKey = 0x000c`, `kIOHIDMaxFeatureReportSizeKey = 1`, zero vendor-page feature elements when enumerated via `IOHIDDeviceCopyMatchingElements`) — not the `0xFF0B` vendor-page interface the protocol spec targets. Report ID `0`, `0x2A`, and `0x2C` were all tried at both 64- and 60-byte payload sizes on both matched services (Mitigations 1 and 2 from Technical Details); all six combinations returned the same rejection. The `0xFF0B` interface is never enumerated by `IOHIDManager` at all on this machine, so there is no HID-layer service left to try. This points to Mitigation 3: a raw USB control transfer (bypassing the HID class layer entirely, as the libusb-based QuadcastRGB reference does), tracked as its own scope-change task below rather than folded silently into Task 5.
+
+### Task 6: HID transport fallback — raw USB control transfer (⚠️ scope change)
+
+Per the Task 5 hardware finding above, `IOKitHIDTransport`'s `IOHIDManagerSetReport` path cannot reach the QuadCast S's vendor-page report handler on this system. Per the plan's "Report submission risk" Mitigation 3, drop to a raw USB control transfer equivalent to QuadcastRGB's `devio.c` (`bmRequestType 0x21`, `bRequest 0x09`, `wValue 0x0300`, `wIndex 0x0000`, 64-byte payload), using the system `IOUSBHost` framework (no new SPM dependency).
+
+- [ ] create `QuadcastKit/HID/IOUSBHostTransport.swift`: `HIDTransport`-conforming adapter using `IOUSBHostDevice` to issue the raw SET_REPORT-equivalent control transfer instead of `IOHIDDeviceSetReport`
+- [ ] match VID `0x0951` / PIDs `0x171f`,`0x171d` via `IOUSBHostDevice`; claim/open the correct USB interface for the control transfer; release cleanly in `close()`
+- [ ] wire `macmic-cli` to use the new transport (replace or fall back from `IOKitHIDTransport`); update `probe` output to reflect the transport actually used
+- [ ] write tests: any pure request-construction logic tested without hardware (e.g. control-request parameter builder, if factored out); the adapter itself is hardware-only, exercised by `probe`, per this plan's existing pattern for `IOKitHIDTransport`
+- [ ] run `swift build -c release && .build/release/macmic-cli probe` against the real device; record output in the plan file; must show a success `IOReturn`
+- [ ] if this also fails to reach the device, ⚠️ stop and re-scope with the user rather than silently degrading v1 (e.g. dropping to a vendored libusb dependency) — do not loop on this indefinitely
+
+### Task 7: AppState and persistence
 
 - [ ] create `MacMic/AppState.swift`: `@Observable` (or `ObservableObject`) model holding `isConnected`, `mode`, `brightness`, `isEnabled`; translates UI intent into `FrameStreamer` calls
 - [ ] persist last mode/brightness/enabled to `UserDefaults` (encode `LightMode` as `Codable`); restore and re-apply on launch
 - [ ] handle device hotplug: on `onDeviceConnected` re-apply current mode; on removal set `isConnected = false` and stop streamer
 - [ ] handle sleep/wake: subscribe to `NSWorkspace.willSleepNotification` / `didWakeNotification`; stop streaming on sleep, re-apply mode on wake (USB state refresh)
 - [ ] write tests: mode changes reach the mock transport; persistence round-trip (encode/decode `LightMode`); reconnect re-applies last mode; wake re-applies mode
-- [ ] run `swift test` - must pass before task 7
+- [ ] run `swift test` - must pass before task 8
 
-### Task 7: Menu bar UI
+### Task 8: Menu bar UI
 
 - [ ] convert `MacMic` executable to a SwiftUI app: `@main` App with `MenuBarExtra("MacMic", systemImage: "mic.fill")` and `.menuBarExtraStyle(.window)`; set `NSApplication` activation policy `.accessory` (no Dock icon) in an app delegate
 - [ ] popover content: enable/disable toggle, `ColorPicker` bound to solid color, preset buttons (Solid / Rainbow Cycle / Blink), brightness `Slider`, connection status line ("QuadCast S connected" / "not found"), Quit button
 - [ ] gray out controls when `isConnected == false`
 - [ ] wire `ColorPicker`'s `Color` → `RGBColor` conversion (via `NSColor` sRGB components) as a testable pure function
 - [ ] write tests: `Color`/`RGBColor` conversion vectors (red/white/black, rounding), AppState → UI state derivations (disabled when disconnected)
-- [ ] run `swift test` - must pass before task 8
+- [ ] run `swift test` - must pass before task 9
 
-### Task 8: App bundle assembly script
+### Task 9: App bundle assembly script
 
 - [ ] create `scripts/make-app.sh`: `swift build -c release`, assemble `dist/MacMic.app` (`Contents/MacOS/MacMic`, generated `Info.plist` with `LSUIElement = true`, bundle id `dev.alavreniuk.macmic`, version), `codesign --force --sign -` (ad-hoc)
 - [ ] make script idempotent and fail-fast (`set -euo pipefail`); verify with `codesign --verify` and a launch check that the process starts and stays alive for 3 seconds (then kill it)
 - [ ] add `dist/` to `.gitignore`
 - [ ] write test/check: shellcheck-clean if shellcheck available; run the script in CI-style (`bash scripts/make-app.sh`) and assert `dist/MacMic.app/Contents/MacOS/MacMic` exists and Info.plist contains `LSUIElement`
-- [ ] run `swift test` and the script - must pass before task 9
+- [ ] run `swift test` and the script - must pass before task 10
 
-### Task 9: Verify acceptance criteria
+### Task 10: Verify acceptance criteria
 
 - [ ] verify all Overview requirements implemented: menu bar app, solid color picker, cycle + blink presets, brightness, hotplug + sleep/wake handling, persistence
 - [ ] verify edge cases: mic unplugged at launch, unplugged mid-stream, invalid hex input in CLI, brightness extremes
@@ -140,7 +159,7 @@ Port sequence generation from `reference/QuadcastRGB/modules/rgbmodes.c` (`seque
 - [ ] build release + bundle script cleanly from a fresh clone state (`git clean -ndx` review, then build)
 - [ ] fix any compiler warnings; run `swift build 2>&1` warning-free
 
-### Task 10: [Final] Update documentation
+### Task 11: [Final] Update documentation
 
 - [ ] write `README.md`: what it is, screenshot placeholder, install (build from source, `make-app.sh`), usage, how the protocol works (frame streaming, no persistence), credits to QuadcastRGB/Ors1mer, GPLv2 notice, known limitations (v1 scope)
 - [ ] add `CLAUDE.md` with build/test commands and architecture map for future sessions
