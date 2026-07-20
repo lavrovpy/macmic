@@ -89,12 +89,12 @@ Port sequence generation from `reference/QuadcastRGB/modules/rgbmodes.c` (`seque
 
 ### Task 4: HID transport layer
 
-- [ ] create `QuadcastKit/HID/HIDTransport.swift`: protocol with `func sendFeatureReport(_ bytes: [UInt8]) throws`, `var onDeviceConnected/onDeviceRemoved` callbacks, `func open() / close()`
-- [ ] create `QuadcastKit/HID/IOKitHIDTransport.swift` using `IOHIDManager`: match VID `0x0951` with PIDs `0x171f` and `0x171d` (array matching dictionaries); register matching/removal callbacks on a dedicated dispatch queue; open device; implement `sendFeatureReport` via `IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, reportID 0, ...)`
-- [ ] device selection strategy (see Technical Details "Report submission risk"): prefer the PID `0x171f` HID service; on `kIOReturnError`/unsupported, fall back to the other QuadCast HID services; remember which service accepted reports
-- [ ] create `QuadcastKit/HID/MockHIDTransport.swift` (records sent reports, scriptable failures) in the test target
-- [ ] write tests using the mock: transport-consumer behavior — reports recorded in order, error propagation, reconnect callback flow (IOKit adapter itself is exercised by Task 5's CLI, not unit tests)
-- [ ] run `swift test` - must pass before task 5
+- [x] create `QuadcastKit/HID/HIDTransport.swift`: protocol with `func sendFeatureReport(_ bytes: [UInt8]) throws`, `var onDeviceConnected/onDeviceRemoved` callbacks, `func open() / close()`
+- [x] create `QuadcastKit/HID/IOKitHIDTransport.swift` using `IOHIDManager`: match VID `0x0951` with PIDs `0x171f` and `0x171d` (array matching dictionaries); register matching/removal callbacks on a dedicated dispatch queue; open device; implement `sendFeatureReport` via `IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, reportID 0, ...)`
+- [x] device selection strategy (see Technical Details "Report submission risk"): prefer the PID `0x171f` HID service; on `kIOReturnError`/unsupported, fall back to the other QuadCast HID services; remember which service accepted reports
+- [x] create `QuadcastKit/HID/MockHIDTransport.swift` (records sent reports, scriptable failures) in the test target
+- [x] write tests using the mock: transport-consumer behavior — reports recorded in order, error propagation, reconnect callback flow (IOKit adapter itself is exercised by Task 5's CLI, not unit tests)
+- [x] run `swift test` - must pass before task 5
 
 ### Task 5: FrameStreamer and hardware smoke-test CLI
 
