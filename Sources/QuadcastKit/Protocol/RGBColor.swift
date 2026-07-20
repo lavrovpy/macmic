@@ -7,7 +7,7 @@
 // See LICENSE for the full license text.
 
 /// An RGB color with 8-bit channels, as sent to the QuadCast S.
-public struct RGBColor: Equatable, Sendable {
+public struct RGBColor: Equatable, Sendable, Codable {
     public var r: UInt8
     public var g: UInt8
     public var b: UInt8

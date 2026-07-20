@@ -18,6 +18,50 @@ public enum LightMode: Equatable, Sendable {
     case blink(colors: [RGBColor], speed: Int)
 }
 
+/// Manual `Codable` conformance (enums with associated values aren't
+/// synthesized) so `AppState` can persist the last-used mode to
+/// `UserDefaults`.
+extension LightMode: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case kind, color, colors, speed
+    }
+
+    private enum Kind: String, Codable {
+        case solid, cycle, blink
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .solid:
+            self = .solid(try container.decode(RGBColor.self, forKey: .color))
+        case .cycle:
+            self = .cycle(speed: try container.decode(Int.self, forKey: .speed))
+        case .blink:
+            self = .blink(
+                colors: try container.decode([RGBColor].self, forKey: .colors),
+                speed: try container.decode(Int.self, forKey: .speed)
+            )
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .solid(let color):
+            try container.encode(Kind.solid, forKey: .kind)
+            try container.encode(color, forKey: .color)
+        case .cycle(let speed):
+            try container.encode(Kind.cycle, forKey: .kind)
+            try container.encode(speed, forKey: .speed)
+        case .blink(let colors, let speed):
+            try container.encode(Kind.blink, forKey: .kind)
+            try container.encode(colors, forKey: .colors)
+            try container.encode(speed, forKey: .speed)
+        }
+    }
+}
+
 /// Expands a `LightMode` into the deterministic, host-precomputed `[Frame]`
 /// sequence the `FrameStreamer` plays back at ~18 fps (one frame per 55 ms
 /// tick). No randomness in v1: QuadcastRGB's blink-random variant is

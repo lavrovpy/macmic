@@ -134,12 +134,12 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 
 ### Task 7: AppState and persistence
 
-- [ ] create `MacMic/AppState.swift`: `@Observable` (or `ObservableObject`) model holding `isConnected`, `mode`, `brightness`, `isEnabled`; translates UI intent into `FrameStreamer` calls
-- [ ] persist last mode/brightness/enabled to `UserDefaults` (encode `LightMode` as `Codable`); restore and re-apply on launch
-- [ ] handle device hotplug: on `onDeviceConnected` re-apply current mode; on removal set `isConnected = false` and stop streamer
-- [ ] handle sleep/wake: subscribe to `NSWorkspace.willSleepNotification` / `didWakeNotification`; stop streaming on sleep, re-apply mode on wake (USB state refresh)
-- [ ] write tests: mode changes reach the mock transport; persistence round-trip (encode/decode `LightMode`); reconnect re-applies last mode; wake re-applies mode
-- [ ] run `swift test` - must pass before task 8
+- [x] create `MacMic/AppState.swift`: `@Observable` (or `ObservableObject`) model holding `isConnected`, `mode`, `brightness`, `isEnabled`; translates UI intent into `FrameStreamer` calls
+- [x] persist last mode/brightness/enabled to `UserDefaults` (encode `LightMode` as `Codable`); restore and re-apply on launch
+- [x] handle device hotplug: on `onDeviceConnected` re-apply current mode; on removal set `isConnected = false` and stop streamer
+- [x] handle sleep/wake: subscribe to `NSWorkspace.willSleepNotification` / `didWakeNotification`; stop streaming on sleep, re-apply mode on wake (USB state refresh)
+- [x] write tests: mode changes reach the mock transport; persistence round-trip (encode/decode `LightMode`); reconnect re-applies last mode; wake re-applies mode
+- [x] run `swift test` - must pass before task 8
 
 ### Task 8: Menu bar UI
 
