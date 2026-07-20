@@ -78,12 +78,14 @@ Port packet construction from `reference/QuadcastRGB/modules/devio.c` and `rgbmo
 
 Port sequence generation from `reference/QuadcastRGB/modules/rgbmodes.c` (`sequence_cycle`, `sequence_blink`, `count_cycle_data`, `count_blink_data`; constants in `rgbmodes.h`: `MIN_CYCL_TR=12`, `MAX_CYCL_TR=128`, speed mapping `SPEED_RANGE`).
 
-- [ ] create `QuadcastKit/Protocol/PresetSequencer.swift` with `enum LightMode { case solid(RGBColor), cycle(speed: Int), blink(colors: [RGBColor], speed: Int) }`
-- [ ] implement `func frames(for mode: LightMode) -> [Frame]` — solid returns 1 frame; cycle generates the hue-rotation sequence with speed-dependent transition count; blink generates color-segment + off-delay segments
-- [ ] keep generation deterministic (no randomness in v1 — skip QuadcastRGB's blink-random variant)
-- [ ] write tests: frame counts match the reference formulas for min/max/default speed; cycle sequence starts and ends adjacent (loops smoothly); blink includes off (000000) delay frames; solid returns exactly one frame
-- [ ] write tests for invalid input (empty blink color list, out-of-range speed clamps)
-- [ ] run `swift test` - must pass before task 4
+- [x] create `QuadcastKit/Protocol/PresetSequencer.swift` with `enum LightMode { case solid(RGBColor), cycle(speed: Int), blink(colors: [RGBColor], speed: Int) }`
+- [x] implement `func frames(for mode: LightMode) -> [Frame]` — solid returns 1 frame; cycle generates the hue-rotation sequence with speed-dependent transition count; blink generates color-segment + off-delay segments
+- [x] keep generation deterministic (no randomness in v1 — skip QuadcastRGB's blink-random variant)
+- [x] write tests: frame counts match the reference formulas for min/max/default speed; cycle sequence starts and ends adjacent (loops smoothly); blink includes off (000000) delay frames; solid returns exactly one frame
+- [x] write tests for invalid input (empty blink color list, out-of-range speed clamps)
+- [x] run `swift test` - must pass before task 4
+
+⚠️ Scope note: QuadcastRGB's `sequence_blink` takes independent `spd` (on-time) and `dly` (off-time) parameters. `LightMode.blink` only exposes `speed` per this plan's signature, so the off-delay segment reuses the on-segment length (`101 - speed` frames each way) for a symmetric blink. Rainbow Cycle uses a fixed built-in 6-hue palette (red/yellow/green/cyan/blue/magenta) rather than a user-supplied color list, since `LightMode.cycle` only takes `speed`.
 
 ### Task 4: HID transport layer
 
