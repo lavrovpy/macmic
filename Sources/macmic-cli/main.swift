@@ -60,6 +60,30 @@ func parseSpeed(_ arguments: [String]) -> Int {
     return value
 }
 
+/// Strips `--speed`/`--brightness` flags *and* the values that follow them,
+/// leaving only the positional `<hex>` color arguments (used by `blink`).
+/// Filtering just the `--`-prefixed tokens isn't enough: a flag's numeric
+/// value (e.g. `123456` in `--speed 123456`) is itself valid 6-digit hex and
+/// would otherwise be silently parsed as an extra color.
+func colorArguments(_ arguments: [String]) -> [String] {
+    var result: [String] = []
+    var skipNext = false
+    for argument in arguments {
+        if skipNext {
+            skipNext = false
+            continue
+        }
+        if argument == "--speed" || argument == "--brightness" {
+            skipNext = true
+            continue
+        }
+        if !argument.hasPrefix("--") {
+            result.append(argument)
+        }
+    }
+    return result
+}
+
 /// Runs the display loop until the process receives SIGINT (Ctrl-C),
 /// stopping the streamer (and so releasing the mic back to its default
 /// rainbow) before exiting.
@@ -103,7 +127,7 @@ case "cycle":
     streamUntilInterrupted(mode: .cycle(speed: parseSpeed(rest)), brightness: parseBrightness(rest))
 
 case "blink":
-    let colors = rest.filter { !$0.hasPrefix("--") }.compactMap { RGBColor(hex: $0) }
+    let colors = colorArguments(rest).compactMap { RGBColor(hex: $0) }
     guard !colors.isEmpty else {
         fail("blink requires at least one valid <hex> color")
     }

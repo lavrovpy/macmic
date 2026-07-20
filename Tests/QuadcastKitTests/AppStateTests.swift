@@ -164,6 +164,24 @@ import Testing
         #expect(state.isConnected == false)
     }
 
+    /// Regression test: `open()` succeeding must not be conflated with a
+    /// device actually being matched. `IOUSBHostTransport.open()` only
+    /// registers IOKit matching notifications; a real device match (or lack
+    /// thereof) is reported asynchronously via `onDeviceConnected`. Launching
+    /// with no mic plugged in must leave `isConnected == false` until a real
+    /// match notification arrives.
+    @Test func deviceAbsentAtLaunchLeavesStateDisconnected() throws {
+        let transport = MockHIDTransport()
+        transport.autoConnectOnOpen = false
+
+        let state = makeState(transport: transport)
+
+        #expect(state.isConnected == false)
+
+        transport.simulateConnect()
+        #expect(state.isConnected == true)
+    }
+
     @Test func corruptedPersistedModeFallsBackToDefault() throws {
         let defaults = Self.freshDefaults()
         defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.mode")

@@ -22,6 +22,11 @@ final class MockHIDTransport: HIDTransport {
     var nextOpenError: HIDTransportError?
     /// Consumed (set back to `nil`) the next time `sendFeatureReport` is called.
     var nextSendError: HIDTransportError?
+    /// Whether a successful `open()` should simulate a device already being
+    /// matched (fires `onDeviceConnected`, like the real transport would for
+    /// a mic that's already plugged in). Set `false` to model launching with
+    /// no mic connected.
+    var autoConnectOnOpen = true
 
     func open() throws {
         if let error = nextOpenError {
@@ -29,6 +34,9 @@ final class MockHIDTransport: HIDTransport {
             throw error
         }
         isOpen = true
+        if autoConnectOnOpen {
+            onDeviceConnected?()
+        }
     }
 
     func close() {

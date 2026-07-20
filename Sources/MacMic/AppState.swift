@@ -107,13 +107,14 @@ public final class AppState: ObservableObject {
             forName: NSWorkspace.didWakeNotification, object: nil, queue: nil
         ) { [weak self] _ in self?.handleDidWake() })
 
-        do {
-            try transport.open()
-            isConnected = true
-            applyEnabledState()
-        } catch {
-            isConnected = false
-        }
+        // `open()` succeeding only means the IOKit matching notifications were
+        // registered, not that a device is actually present yet: for
+        // `IOUSBHostTransport`, any already-matched device is reported
+        // asynchronously through `onDeviceConnected` (see its `handleMatched`),
+        // so `isConnected` must wait for that callback rather than being set
+        // here — otherwise the UI would show "connected" even with no mic
+        // plugged in.
+        try? transport.open()
     }
 
     deinit {
