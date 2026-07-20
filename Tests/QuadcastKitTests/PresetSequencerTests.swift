@@ -81,6 +81,13 @@ import Testing
         let frames = PresetSequencer.frames(for: .blink(colors: colors, speed: speed))
         let segmentLength = (101 - speed) * 2
         #expect(frames.count == segmentLength * colors.count)
+
+        // Each color's segment must appear in order, not just contribute to
+        // the total count, so reordering/dropping/duplicating a color's
+        // segment would fail this test even though the count matches.
+        #expect(frames[0].upper == colors[0])
+        #expect(frames[segmentLength].upper == colors[1])
+        #expect(frames[segmentLength * 2].upper == colors[2])
     }
 
     @Test func blinkWithEmptyColorListReturnsNoFrames() {

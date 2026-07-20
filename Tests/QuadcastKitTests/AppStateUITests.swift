@@ -77,4 +77,15 @@ import Testing
 
         #expect(state.mode == .solid(RGBColor(r: 0xFF, g: 0, b: 0)))
     }
+
+    @Test func solidColorSurvivesSwitchingToAndFromAPreset() throws {
+        let state = makeState()
+        state.mode = .solid(RGBColor(r: 0xAA, g: 0xBB, b: 0xCC))
+
+        state.mode = .cycle(speed: 50)
+        #expect(rgbColor(from: state.solidColor) == RGBColor(r: 0xAA, g: 0xBB, b: 0xCC))
+
+        state.mode = .blink(colors: [RGBColor(r: 1, g: 2, b: 3)], speed: 50)
+        #expect(rgbColor(from: state.solidColor) == RGBColor(r: 0xAA, g: 0xBB, b: 0xCC))
+    }
 }

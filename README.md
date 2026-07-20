@@ -17,7 +17,7 @@ Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login
 
 ## Install
 
-MacMic is distributed as source; there's no signed release yet (see Known Limitations). Build it yourself:
+Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no signed release yet (see Known Limitations). Build it yourself:
 
 ```sh
 git clone <this repo>

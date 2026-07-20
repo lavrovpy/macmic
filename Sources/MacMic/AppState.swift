@@ -29,10 +29,19 @@ public final class AppState: ObservableObject {
 
     @Published public var mode: LightMode {
         didSet {
+            if case .solid(let rgb) = mode {
+                lastSolidColor = rgb
+            }
             defaults.set((try? JSONEncoder().encode(mode)) ?? Data(), forKey: DefaultsKey.mode)
             applyEnabledState()
         }
     }
+
+    /// The last color picked while in `.solid` mode, kept even while a
+    /// preset (`Cycle`/`Blink`) is active so switching presets and back
+    /// doesn't reset the picker to white. Backs `AppState.solidColor`'s
+    /// non-solid fallback (Task 8).
+    @Published public private(set) var lastSolidColor: QuadcastKit.RGBColor
 
     @Published public var brightness: Double {
         didSet {
@@ -77,9 +86,15 @@ public final class AppState: ObservableObject {
         self.streamer = FrameStreamer(transport: transport, interval: streamerInterval)
         self.defaults = defaults
         self.notificationCenter = notificationCenter
-        self.mode = Self.loadMode(from: defaults)
+        let loadedMode = Self.loadMode(from: defaults)
+        self.mode = loadedMode
         self.brightness = Self.loadBrightness(from: defaults)
         self.isEnabled = Self.loadIsEnabled(from: defaults)
+        if case .solid(let rgb) = loadedMode {
+            self.lastSolidColor = rgb
+        } else {
+            self.lastSolidColor = QuadcastKit.RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)
+        }
 
         transport.onDeviceConnected = { [weak self] in self?.handleDeviceConnected() }
         transport.onDeviceRemoved = { [weak self] in self?.handleDeviceRemoved() }
@@ -105,14 +120,17 @@ public final class AppState: ObservableObject {
         for token in observerTokens {
             notificationCenter.removeObserver(token)
         }
+        streamer.stop()
         transport.close()
     }
 
     /// Starts (or restarts, picking up the current `mode`/`brightness`) or
-    /// stops the streamer to match `isEnabled`. Called whenever `mode`,
-    /// `brightness`, or `isEnabled` changes, and after (re)connecting.
+    /// stops the streamer to match `isEnabled`/`isConnected`. Called whenever
+    /// `mode`, `brightness`, or `isEnabled` changes, and after (re)connecting.
+    /// Also gated on `isConnected` so a state mutation that races a hotplug
+    /// removal can't resume streaming against a device that's already gone.
     private func applyEnabledState() {
-        guard isEnabled else {
+        guard isConnected, isEnabled else {
             streamer.stop()
             return
         }

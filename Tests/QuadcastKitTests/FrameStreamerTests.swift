@@ -73,7 +73,7 @@ import Testing
         ])
     }
 
-    @Test func stopsAndSurfacesErrorOnSendFailure() throws {
+    @Test func stopsAndSurfacesErrorOnSendFailure() async throws {
         let transport = MockHIDTransport()
         try transport.open()
         let streamer = FrameStreamer(transport: transport, interval: Self.dormantInterval)
@@ -83,9 +83,25 @@ import Testing
         streamer.start()
         transport.nextSendError = .sendFailed(-1)
         streamer.tick()
+        #expect(streamer.isRunning == false) // set synchronously, before onError is delivered
 
+        // onError is delivered on the main queue (see FrameStreamer.deliverError),
+        // so give it a beat to run before asserting.
+        try await Task.sleep(nanoseconds: 50_000_000)
         #expect(captured == .sendFailed(-1))
-        #expect(streamer.isRunning == false)
+    }
+
+    @Test func emptyFrameSequenceFallsBackToBlackInsteadOfCrashing() throws {
+        let transport = MockHIDTransport()
+        try transport.open()
+        let streamer = FrameStreamer(transport: transport, interval: Self.dormantInterval)
+
+        streamer.setMode(.blink(colors: [], speed: 50))
+        streamer.start()
+        streamer.tick()
+        streamer.tick()
+
+        #expect(transport.sentReports.last == Frame(color: RGBColor(r: 0, g: 0, b: 0)).dataPacket())
     }
 
     @Test func stopCeasesSends() throws {

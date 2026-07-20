@@ -7,6 +7,7 @@
 // See LICENSE for the full license text.
 
 import Dispatch
+import Foundation
 
 /// Streams the QuadCast S display loop: a header packet followed by the next
 /// data packet in the current frame sequence, sent once per `interval`
@@ -86,7 +87,20 @@ public final class FrameStreamer {
             isRunning = false
             timer?.cancel()
             timer = nil
+            deliverError(error)
+        }
+    }
+
+    /// Delivers `onError` on the main thread, matching how `HIDTransport`
+    /// adapters deliver their connect/remove callbacks (so `@Published`
+    /// consumers like `AppState` never observe an off-main mutation), while
+    /// avoiding the async hop when already on main so `tick()` stays
+    /// synchronous and deterministic for tests.
+    private func deliverError(_ error: Error) {
+        if Thread.isMainThread {
             onError?(error)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.onError?(error) }
         }
     }
 }

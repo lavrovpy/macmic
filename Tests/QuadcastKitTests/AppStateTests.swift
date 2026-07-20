@@ -125,7 +125,7 @@ import Testing
         #expect(transport.sentReports.last == Frame(color: color).dataPacket())
     }
 
-    @Test func transportErrorMarksDisconnected() throws {
+    @Test func transportErrorMarksDisconnected() async throws {
         let transport = MockHIDTransport()
         let state = makeState(transport: transport)
         #expect(state.isConnected == true)
@@ -133,6 +133,43 @@ import Testing
         transport.nextSendError = .sendFailed(-1)
         state.streamer.tick()
 
+        // FrameStreamer delivers onError on the main queue, so give it a
+        // beat to run before asserting.
+        try await Task.sleep(nanoseconds: 50_000_000)
         #expect(state.isConnected == false)
+    }
+
+    @Test func mutatingStateWhileDisconnectedDoesNotResumeStreaming() throws {
+        let transport = MockHIDTransport()
+        let state = makeState(transport: transport)
+        state.mode = .solid(RGBColor(r: 1, g: 2, b: 3))
+        state.streamer.tick()
+
+        transport.simulateRemoval()
+        #expect(state.isConnected == false)
+
+        state.mode = .solid(RGBColor(r: 9, g: 9, b: 9))
+        let countWhileDisconnected = transport.sentReports.count
+        state.streamer.tick()
+
+        #expect(transport.sentReports.count == countWhileDisconnected)
+    }
+
+    @Test func openFailureLeavesStateDisconnected() throws {
+        let transport = MockHIDTransport()
+        transport.nextOpenError = .openFailed(-1)
+
+        let state = makeState(transport: transport)
+
+        #expect(state.isConnected == false)
+    }
+
+    @Test func corruptedPersistedModeFallsBackToDefault() throws {
+        let defaults = Self.freshDefaults()
+        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.mode")
+
+        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
+
+        #expect(state.mode == .solid(RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)))
     }
 }

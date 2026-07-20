@@ -18,15 +18,16 @@ extension AppState {
     static let defaultPresetSpeed = 50
 
     /// The color shown by the `ColorPicker`. Reflects the current mode's
-    /// color when it's `.solid`; otherwise falls back to white so switching
-    /// back to Solid from a preset starts from a sensible default. Setting
-    /// it switches `mode` to `.solid`.
+    /// color when it's `.solid`; otherwise falls back to `lastSolidColor` (the
+    /// last color picked before switching to a preset) so switching back to
+    /// Solid restores what the user had, rather than resetting to white.
+    /// Setting it switches `mode` to `.solid`.
     public var solidColor: Color {
         get {
             if case .solid(let rgb) = mode {
                 return color(from: rgb)
             }
-            return .white
+            return color(from: lastSolidColor)
         }
         set {
             mode = .solid(rgbColor(from: newValue))
