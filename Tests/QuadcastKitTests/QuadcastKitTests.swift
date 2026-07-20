@@ -10,5 +10,5 @@ import Testing
 @testable import QuadcastKit
 
 @Test func packageExposesVersion() {
-    #expect(!QuadcastKit.version.isEmpty)
+    #expect(!QuadcastKitInfo.version.isEmpty)
 }

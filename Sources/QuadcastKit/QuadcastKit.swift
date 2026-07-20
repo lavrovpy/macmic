@@ -12,6 +12,11 @@
 /// Library entry point for QuadcastKit: the QuadCast S RGB protocol and HID
 /// transport layer, kept separate from any UI so it can be reused by both
 /// the menu bar app and the `macmic-cli` diagnostic tool.
-public enum QuadcastKit {
+///
+/// Named `QuadcastKitInfo`, not `QuadcastKit`, so that referring to this
+/// module by name (e.g. `QuadcastKit.RGBColor` from a client that also
+/// imports AppKit, whose transitive Quickdraw import defines an unrelated
+/// global `RGBColor`) isn't shadowed by a same-named top-level type.
+public enum QuadcastKitInfo {
     public static let version = "0.1.0"
 }

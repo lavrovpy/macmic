@@ -11,7 +11,7 @@ import Foundation
 import QuadcastKit
 
 let usage = """
-    macmic-cli \(QuadcastKit.version)
+    macmic-cli \(QuadcastKitInfo.version)
 
     Usage:
       macmic-cli solid <hex> [--brightness N]

@@ -143,12 +143,14 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 
 ### Task 8: Menu bar UI
 
-- [ ] convert `MacMic` executable to a SwiftUI app: `@main` App with `MenuBarExtra("MacMic", systemImage: "mic.fill")` and `.menuBarExtraStyle(.window)`; set `NSApplication` activation policy `.accessory` (no Dock icon) in an app delegate
-- [ ] popover content: enable/disable toggle, `ColorPicker` bound to solid color, preset buttons (Solid / Rainbow Cycle / Blink), brightness `Slider`, connection status line ("QuadCast S connected" / "not found"), Quit button
-- [ ] gray out controls when `isConnected == false`
-- [ ] wire `ColorPicker`'s `Color` → `RGBColor` conversion (via `NSColor` sRGB components) as a testable pure function
-- [ ] write tests: `Color`/`RGBColor` conversion vectors (red/white/black, rounding), AppState → UI state derivations (disabled when disconnected)
-- [ ] run `swift test` - must pass before task 9
+- [x] convert `MacMic` executable to a SwiftUI app: `@main` App with `MenuBarExtra("MacMic", systemImage: "mic.fill")` and `.menuBarExtraStyle(.window)`; set `NSApplication` activation policy `.accessory` (no Dock icon) in an app delegate
+- [x] popover content: enable/disable toggle, `ColorPicker` bound to solid color, preset buttons (Solid / Rainbow Cycle / Blink), brightness `Slider`, connection status line ("QuadCast S connected" / "not found"), Quit button
+- [x] gray out controls when `isConnected == false`
+- [x] wire `ColorPicker`'s `Color` → `RGBColor` conversion (via `NSColor` sRGB components) as a testable pure function
+- [x] write tests: `Color`/`RGBColor` conversion vectors (red/white/black, rounding), AppState → UI state derivations (disabled when disconnected)
+- [x] run `swift test` - must pass before task 9
+
+⚠️ Scope note: renamed `QuadcastKit`'s version-info enum to `QuadcastKitInfo` (was `QuadcastKit`, colliding with the module name — `QuadcastKit.RGBColor` from a file that also imports AppKit resolved to the enum instead of the module, since AppKit transitively defines an unrelated global `RGBColor` via Quickdraw). Updated the two call sites (`macmic-cli`, `QuadcastKitTests`).
 
 ### Task 9: App bundle assembly script
 
