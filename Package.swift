@@ -20,7 +20,7 @@ let package = Package(
         ),
         .testTarget(
             name: "QuadcastKitTests",
-            dependencies: ["QuadcastKit", "MacMic"]
+            dependencies: ["QuadcastKit", "MacMic", "macmic-cli"]
         )
     ]
 )

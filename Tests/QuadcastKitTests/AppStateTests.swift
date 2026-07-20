@@ -83,6 +83,23 @@ import Testing
         #expect(second.isEnabled == false)
     }
 
+    /// Regression test: `lastSolidColor` must survive a relaunch even while a
+    /// preset (`.cycle`/`.blink`) is the active mode, not just an in-memory
+    /// session — otherwise the color picker resets to white on next launch.
+    @Test func lastSolidColorSurvivesRelaunchWhilePresetIsActive() throws {
+        let defaults = Self.freshDefaults()
+        let color = RGBColor(r: 0xAA, g: 0xBB, b: 0xCC)
+
+        let first = makeState(transport: MockHIDTransport(), defaults: defaults)
+        first.mode = .solid(color)
+        first.mode = .cycle(speed: 50)
+
+        let second = makeState(transport: MockHIDTransport(), defaults: defaults)
+
+        #expect(second.mode == .cycle(speed: 50))
+        #expect(second.lastSolidColor == color)
+    }
+
     @Test func defaultsAreUsedWhenNothingPersistedYet() throws {
         let state = makeState(transport: MockHIDTransport())
 

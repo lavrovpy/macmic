@@ -21,6 +21,7 @@ public final class AppState: ObservableObject {
         static let mode = "dev.alavreniuk.macmic.mode"
         static let brightness = "dev.alavreniuk.macmic.brightness"
         static let isEnabled = "dev.alavreniuk.macmic.isEnabled"
+        static let lastSolidColor = "dev.alavreniuk.macmic.lastSolidColor"
     }
 
     /// Whether a QuadCast HID/USB service is currently matched. Controls
@@ -31,6 +32,7 @@ public final class AppState: ObservableObject {
         didSet {
             if case .solid(let rgb) = mode {
                 lastSolidColor = rgb
+                defaults.set((try? JSONEncoder().encode(rgb)) ?? Data(), forKey: DefaultsKey.lastSolidColor)
             }
             defaults.set((try? JSONEncoder().encode(mode)) ?? Data(), forKey: DefaultsKey.mode)
             applyEnabledState()
@@ -93,7 +95,7 @@ public final class AppState: ObservableObject {
         if case .solid(let rgb) = loadedMode {
             self.lastSolidColor = rgb
         } else {
-            self.lastSolidColor = QuadcastKit.RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)
+            self.lastSolidColor = Self.loadLastSolidColor(from: defaults)
         }
 
         transport.onDeviceConnected = { [weak self] in self?.handleDeviceConnected() }
@@ -177,5 +179,13 @@ public final class AppState: ObservableObject {
     private static func loadIsEnabled(from defaults: UserDefaults) -> Bool {
         guard defaults.object(forKey: DefaultsKey.isEnabled) != nil else { return true }
         return defaults.bool(forKey: DefaultsKey.isEnabled)
+    }
+
+    private static func loadLastSolidColor(from defaults: UserDefaults) -> QuadcastKit.RGBColor {
+        guard let data = defaults.data(forKey: DefaultsKey.lastSolidColor),
+              let rgb = try? JSONDecoder().decode(QuadcastKit.RGBColor.self, from: data) else {
+            return QuadcastKit.RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)
+        }
+        return rgb
     }
 }

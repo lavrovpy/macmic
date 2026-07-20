@@ -92,15 +92,9 @@ public final class FrameStreamer {
     }
 
     /// Delivers `onError` on the main thread, matching how `HIDTransport`
-    /// adapters deliver their connect/remove callbacks (so `@Published`
-    /// consumers like `AppState` never observe an off-main mutation), while
-    /// avoiding the async hop when already on main so `tick()` stays
-    /// synchronous and deterministic for tests.
+    /// adapters deliver their connect/remove callbacks, so `@Published`
+    /// consumers like `AppState` never observe an off-main mutation.
     private func deliverError(_ error: Error) {
-        if Thread.isMainThread {
-            onError?(error)
-        } else {
-            DispatchQueue.main.async { [weak self] in self?.onError?(error) }
-        }
+        DispatchQueue.main.async { [weak self] in self?.onError?(error) }
     }
 }

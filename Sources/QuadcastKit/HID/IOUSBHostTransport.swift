@@ -111,22 +111,29 @@ public final class IOUSBHostTransport: HIDTransport {
         notificationPort = nil
     }
 
+    /// Runs on `queue` for its whole duration (not just the candidate
+    /// snapshot) so a concurrent hotplug removal can't `destroy()` the
+    /// `IOUSBHostDevice` this is actively sending a control transfer to;
+    /// `handleMatched`/`handleRemoved` mutate `devicesByEntryID` via
+    /// `queue.async`, so this serializes against them instead of racing.
     public func sendFeatureReport(_ bytes: [UInt8]) throws {
-        let candidates = queue.sync { orderedCandidates() }
-        guard !candidates.isEmpty else {
-            throw HIDTransportError.deviceNotFound
-        }
-
-        var lastResult: IOReturn = kIOReturnNotFound
-        for (entryID, device) in candidates {
-            let result = Self.sendControlTransfer(bytes, to: device)
-            if result == kIOReturnSuccess {
-                queue.sync { activeEntryID = entryID }
-                return
+        try queue.sync {
+            let candidates = orderedCandidates()
+            guard !candidates.isEmpty else {
+                throw HIDTransportError.deviceNotFound
             }
-            lastResult = result
+
+            var lastResult: IOReturn = kIOReturnNotFound
+            for (entryID, device) in candidates {
+                let result = Self.sendControlTransfer(bytes, to: device)
+                if result == kIOReturnSuccess {
+                    activeEntryID = entryID
+                    return
+                }
+                lastResult = result
+            }
+            throw HIDTransportError.sendFailed(lastResult)
         }
-        throw HIDTransportError.sendFailed(lastResult)
     }
 
     /// Sends a header-packet control transfer to every currently matched
@@ -206,7 +213,7 @@ public final class IOUSBHostTransport: HIDTransport {
             ) else { continue }
             queue.async { [weak self] in
                 guard let self else { return }
-                self.devicesByEntryID[entryID] = device
+                self.devicesByEntryID.updateValue(device, forKey: entryID)?.destroy()
                 DispatchQueue.main.async { self.onDeviceConnected?() }
             }
         }

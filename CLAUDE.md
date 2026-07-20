@@ -42,7 +42,7 @@ macmic-cli (probe / solid / cycle / blink — thin executable over QuadcastKit)
 - `QuadcastKit` — library target, all protocol/HID logic, zero UI dependencies
 - `MacMic` — executable, SwiftUI menu bar app, depends on `QuadcastKit`
 - `macmic-cli` — executable, hardware diagnostic + scriptable CLI, depends on `QuadcastKit`
-- `QuadcastKitTests` — test target, depends on both `QuadcastKit` and `MacMic` (so UI-adjacent pure functions like color conversion are covered too)
+- `QuadcastKitTests` — test target, depends on `QuadcastKit`, `MacMic`, and `macmic-cli` (so UI-adjacent pure functions like color conversion and the CLI's pure argument-parsing helpers are covered too)
 
 ### Key files
 
@@ -55,6 +55,8 @@ macmic-cli (probe / solid / cycle / blink — thin executable over QuadcastKit)
 - `Sources/QuadcastKit/HID/IOKitHIDTransport.swift` — `IOHIDManager`-based transport (non-functional on this hardware; see below)
 - `Sources/QuadcastKit/FrameStreamer.swift` — owns the 55 ms timer, sends header+data packets in a loop, swaps `LightMode` atomically
 - `Sources/MacMic/AppState.swift` — `@Observable`/`ObservableObject` model: persistence (`UserDefaults`), hotplug, sleep/wake, translates UI intent into `FrameStreamer` calls
+- `Sources/MacMic/AppState+UI.swift` — UI-facing derivations on top of `AppState`: `solidColor` (falls back to `lastSolidColor`, not white, when a preset is active), `controlsEnabled`, `connectionStatusText`
+- `Sources/MacMic/ColorConversion.swift` — pure `Color` ↔ `QuadcastKit.RGBColor` conversion via `NSColor`'s sRGB space; testable without a menu bar
 - `Sources/MacMic/ContentView.swift`, `MacMicApp.swift` — SwiftUI menu bar surface
 - `Sources/macmic-cli/main.swift` — `probe` / `solid` / `cycle` / `blink` subcommands
 
@@ -72,6 +74,8 @@ This is important context for any future protocol/transport work — see the pla
 - The working path is a raw USB control transfer via `IOUSBHostDevice` (`Sources/QuadcastKit/HID/IOUSBHostTransport.swift`), matching what QuadcastRGB does over libusb. `IOUSBHostObjectInitOptionsDeviceSeize` on device init is what lets it take over from the kernel-resident HID driver — no separate `IOUSBHostInterface` claim needed.
 - Two USB functions enumerate for one physical mic: PID `0x171f` (accepts control transfers, `kIOReturnSuccess`) and PID `0x171d` (rejects, `kIOReturnError`). Always prefer `0x171f`.
 - The device does not persist color — streaming must never stop while lighting should stay on. `FrameStreamer` is a resident 55 ms loop, not a fire-and-forget configurator.
+- `HIDTransport.open()` succeeding only means matching notifications were registered, not that a device is present: `IOUSBHostTransport` reports an already-matched device asynchronously via `onDeviceConnected` (`handleMatched` hops queue → main). `AppState.isConnected` must be set from that callback, never assumed true right after `open()` returns — see the `deviceAbsentAtLaunchLeavesStateDisconnected` regression test.
+- `AppState.applyEnabledState()` must gate on `isConnected` as well as `isEnabled`: a `mode`/`brightness` change racing a hotplug-removal notification must not resume the streamer against a device that just disappeared.
 
 ## Conventions
 
