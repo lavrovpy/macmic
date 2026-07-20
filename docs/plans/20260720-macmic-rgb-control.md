@@ -67,12 +67,12 @@
 
 Port packet construction from `reference/QuadcastRGB/modules/devio.c` and `rgbmodes.c` (see Technical Details for the byte layout).
 
-- [ ] create `QuadcastKit/Protocol/QuadcastPacket.swift`: `static func headerPacket() -> [UInt8]` returning the 64-byte header `04 F2 00 00 00 00 00 00 01` + zero padding
-- [ ] create `RGBColor` struct (r, g, b as UInt8) with `init?(hex: String)` parsing `RRGGBB` / `#RRGGBB`
-- [ ] implement `Frame` type: one display frame = upper-zone color + lower-zone color; `func dataPacket() -> [UInt8]` returning 64 bytes: `[0x81, r, g, b]` (upper) at offset 0, `[0x81, r, g, b]` (lower) at offset 4, zero padding
-- [ ] implement brightness scaling: `Frame.scaled(brightness: Double)` multiplying each channel, clamped 0...1
-- [ ] write tests: header packet byte-exact vector; solid red frame == `81 FF 00 00 81 FF 00 00` + 56 zeros; hex parsing success + failure cases; brightness 0/0.5/1 vectors
-- [ ] run `swift test` - must pass before task 3
+- [x] create `QuadcastKit/Protocol/QuadcastPacket.swift`: `static func headerPacket() -> [UInt8]` returning the 64-byte header `04 F2 00 00 00 00 00 00 01` + zero padding
+- [x] create `RGBColor` struct (r, g, b as UInt8) with `init?(hex: String)` parsing `RRGGBB` / `#RRGGBB`
+- [x] implement `Frame` type: one display frame = upper-zone color + lower-zone color; `func dataPacket() -> [UInt8]` returning 64 bytes: `[0x81, r, g, b]` (upper) at offset 0, `[0x81, r, g, b]` (lower) at offset 4, zero padding
+- [x] implement brightness scaling: `Frame.scaled(brightness: Double)` multiplying each channel, clamped 0...1
+- [x] write tests: header packet byte-exact vector; solid red frame == `81 FF 00 00 81 FF 00 00` + 56 zeros; hex parsing success + failure cases; brightness 0/0.5/1 vectors
+- [x] run `swift test` - must pass before task 3
 
 ### Task 3: Preset frame sequencers — Rainbow Cycle and Blink
 
