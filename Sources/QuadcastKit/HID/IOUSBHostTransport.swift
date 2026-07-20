@@ -229,6 +229,12 @@ public final class IOUSBHostTransport: HIDTransport {
         }
     }
 
+    /// One physical mic enumerates as two USB functions (`0x171f`, `0x171d`;
+    /// see `productIDs`), each a separate matched service with its own
+    /// removal notification. Only surfaces `onDeviceRemoved` once every
+    /// matched function is gone, so a lone termination of one function (e.g.
+    /// the always-rejecting `0x171d`) doesn't stop the streamer while the
+    /// other is still present and working.
     private func handleRemoved(_ iterator: io_iterator_t) {
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
@@ -241,7 +247,9 @@ public final class IOUSBHostTransport: HIDTransport {
                 if self.activeEntryID == entryID {
                     self.activeEntryID = nil
                 }
-                DispatchQueue.main.async { self.onDeviceRemoved?() }
+                if self.devicesByEntryID.isEmpty {
+                    DispatchQueue.main.async { self.onDeviceRemoved?() }
+                }
             }
         }
     }
