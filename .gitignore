@@ -1,0 +1,9 @@
+
+# ralphex progress logs
+.ralphex/progress/
+
+# Swift
+.build/
+.swiftpm/
+*.xcodeproj
+.DS_Store

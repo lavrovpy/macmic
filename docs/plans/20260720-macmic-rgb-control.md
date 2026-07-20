@@ -56,12 +56,12 @@
 
 ### Task 1: Scaffold SwiftPM package and license
 
-- [ ] create `Package.swift`: package `MacMic`, platforms `.macOS(.v13)`, targets: `QuadcastKit` (library), `MacMic` (executable, depends on QuadcastKit), `macmic-cli` (executable, depends on QuadcastKit), `QuadcastKitTests` (test target)
-- [ ] create minimal source stubs so all targets compile (`QuadcastKit/QuadcastKit.swift`, `MacMic/main.swift` printing a placeholder, `macmic-cli/main.swift` printing usage)
-- [ ] add `LICENSE` (GPLv2 full text) and GPLv2 header comment template noting "protocol layer ported from QuadcastRGB, Copyright (C) 2022-2025 Ors1mer"
-- [ ] create `.gitignore` for Swift (`.build/`, `.swiftpm/`, `*.xcodeproj`, `.DS_Store`)
-- [ ] write a smoke test in `QuadcastKitTests` (imports QuadcastKit, trivial assertion)
-- [ ] run `swift build && swift test` - must pass before task 2
+- [x] create `Package.swift`: package `MacMic`, platforms `.macOS(.v13)`, targets: `QuadcastKit` (library), `MacMic` (executable, depends on QuadcastKit), `macmic-cli` (executable, depends on QuadcastKit), `QuadcastKitTests` (test target)
+- [x] create minimal source stubs so all targets compile (`QuadcastKit/QuadcastKit.swift`, `MacMic/main.swift` printing a placeholder, `macmic-cli/main.swift` printing usage)
+- [x] add `LICENSE` (GPLv2 full text) and GPLv2 header comment template noting "protocol layer ported from QuadcastRGB, Copyright (C) 2022-2025 Ors1mer"
+- [x] create `.gitignore` for Swift (`.build/`, `.swiftpm/`, `*.xcodeproj`, `.DS_Store`)
+- [x] write a smoke test in `QuadcastKitTests` (imports QuadcastKit, trivial assertion)
+- [x] run `swift build && swift test` - must pass before task 2
 
 ### Task 2: Packet builder — header and solid-color frames
 
