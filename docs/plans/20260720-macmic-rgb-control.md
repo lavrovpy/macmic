@@ -171,9 +171,9 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 
 ### Task 11: [Final] Update documentation
 
-- [ ] write `README.md`: what it is, screenshot placeholder, install (build from source, `make-app.sh`), usage, how the protocol works (frame streaming, no persistence), credits to QuadcastRGB/Ors1mer, GPLv2 notice, known limitations (v1 scope)
-- [ ] add `CLAUDE.md` with build/test commands and architecture map for future sessions
-- [ ] ensure every source file carries the GPLv2 header
+- [x] write `README.md`: what it is, screenshot placeholder, install (build from source, `make-app.sh`), usage, how the protocol works (frame streaming, no persistence), credits to QuadcastRGB/Ors1mer, GPLv2 notice, known limitations (v1 scope)
+- [x] add `CLAUDE.md` with build/test commands and architecture map for future sessions
+- [x] ensure every source file carries the GPLv2 header — already added incrementally in prior tasks; verified all 25 Swift sources under `Sources/`/`Tests/` plus `scripts/make-app.sh` carry the header (checked via `grep -qi "General Public License"` over each file's first 8 lines)
 
 ## Technical Details
 
