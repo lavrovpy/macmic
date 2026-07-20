@@ -47,7 +47,12 @@ public final class FrameStreamer {
     public func setMode(_ mode: LightMode, brightness: Double = 1) {
         let newFrames = PresetSequencer.frames(for: mode).map { $0.scaled(brightness: brightness) }
         let resolvedFrames = newFrames.isEmpty ? [Frame(color: RGBColor(r: 0, g: 0, b: 0))] : newFrames
-        queue.sync {
+        // `.async`, not `.sync`: `queue` is also where `performTick()` runs its
+        // blocking USB control transfers (up to ~1s each). A caller on the
+        // main thread (e.g. `AppState`'s `didSet` observers, driven by a
+        // `Slider` drag) must never block waiting for an in-flight transfer
+        // to finish just to enqueue a state change.
+        queue.async { [self] in
             if mode != lastMode || frameIndex >= resolvedFrames.count {
                 frameIndex = 0
             }
@@ -58,7 +63,7 @@ public final class FrameStreamer {
 
     /// Starts (or, if already running, no-ops) the periodic display loop.
     public func start() {
-        queue.sync {
+        queue.async { [self] in
             guard timer == nil else { return }
             isRunning = true
             let source = DispatchSource.makeTimerSource(queue: queue)
@@ -74,7 +79,7 @@ public final class FrameStreamer {
     /// Stops the display loop; no further reports are sent until `start()`
     /// is called again.
     public func stop() {
-        queue.sync {
+        queue.async { [self] in
             isRunning = false
             timer?.cancel()
             timer = nil
