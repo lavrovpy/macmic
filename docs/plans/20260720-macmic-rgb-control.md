@@ -154,11 +154,11 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 
 ### Task 9: App bundle assembly script
 
-- [ ] create `scripts/make-app.sh`: `swift build -c release`, assemble `dist/MacMic.app` (`Contents/MacOS/MacMic`, generated `Info.plist` with `LSUIElement = true`, bundle id `dev.alavreniuk.macmic`, version), `codesign --force --sign -` (ad-hoc)
-- [ ] make script idempotent and fail-fast (`set -euo pipefail`); verify with `codesign --verify` and a launch check that the process starts and stays alive for 3 seconds (then kill it)
-- [ ] add `dist/` to `.gitignore`
-- [ ] write test/check: shellcheck-clean if shellcheck available; run the script in CI-style (`bash scripts/make-app.sh`) and assert `dist/MacMic.app/Contents/MacOS/MacMic` exists and Info.plist contains `LSUIElement`
-- [ ] run `swift test` and the script - must pass before task 10
+- [x] create `scripts/make-app.sh`: `swift build -c release`, assemble `dist/MacMic.app` (`Contents/MacOS/MacMic`, generated `Info.plist` with `LSUIElement = true`, bundle id `dev.alavreniuk.macmic`, version), `codesign --force --sign -` (ad-hoc)
+- [x] make script idempotent and fail-fast (`set -euo pipefail`); verify with `codesign --verify` and a launch check that the process starts and stays alive for 3 seconds (then kill it)
+- [x] add `dist/` to `.gitignore`
+- [x] write test/check: shellcheck-clean if shellcheck available; run the script in CI-style (`bash scripts/make-app.sh`) and assert `dist/MacMic.app/Contents/MacOS/MacMic` exists and Info.plist contains `LSUIElement`
+- [x] run `swift test` and the script - must pass before task 10
 
 ### Task 10: Verify acceptance criteria
 

@@ -7,3 +7,6 @@
 .swiftpm/
 *.xcodeproj
 .DS_Store
+
+# App bundle assembly output
+dist/
