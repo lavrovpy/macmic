@@ -155,6 +155,7 @@ import Testing
         streamer.start()
         try await Task.sleep(nanoseconds: 120_000_000)
         streamer.stop()
+        streamer.tick() // no-op (stopped); forces a sync with the internal queue before reading the count
         let countAfterStop = transport.sentReports.count
         #expect(countAfterStop > 0)
 
