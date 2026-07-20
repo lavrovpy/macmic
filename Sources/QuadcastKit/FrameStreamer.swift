@@ -28,6 +28,7 @@ public final class FrameStreamer {
     private var timer: DispatchSourceTimer?
     private var frames: [Frame] = [Frame(color: RGBColor(r: 0, g: 0, b: 0))]
     private var frameIndex = 0
+    private var lastMode: LightMode?
 
     public init(transport: HIDTransport, interval: DispatchTimeInterval = .milliseconds(55)) {
         self.transport = transport
@@ -36,11 +37,22 @@ public final class FrameStreamer {
 
     /// Swaps the frame sequence played by the display loop. Takes effect on
     /// the next tick; safe to call while streaming.
+    ///
+    /// Only resets playback to the start of the sequence when `mode` itself
+    /// changes. `AppState.applyEnabledState()` calls this on every brightness
+    /// change too (e.g. once per `Slider` drag tick), and `mode`/`brightness`
+    /// are set independently — without this, dragging the brightness slider
+    /// while a `.cycle`/`.blink` preset is animating would restart it from
+    /// frame 0 on every tick instead of dimming it in place.
     public func setMode(_ mode: LightMode, brightness: Double = 1) {
         let newFrames = PresetSequencer.frames(for: mode).map { $0.scaled(brightness: brightness) }
+        let resolvedFrames = newFrames.isEmpty ? [Frame(color: RGBColor(r: 0, g: 0, b: 0))] : newFrames
         queue.sync {
-            frames = newFrames.isEmpty ? [Frame(color: RGBColor(r: 0, g: 0, b: 0))] : newFrames
-            frameIndex = 0
+            if mode != lastMode || frameIndex >= resolvedFrames.count {
+                frameIndex = 0
+            }
+            frames = resolvedFrames
+            lastMode = mode
         }
     }
 

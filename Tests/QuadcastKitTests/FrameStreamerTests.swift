@@ -73,6 +73,33 @@ import Testing
         ])
     }
 
+    /// Regression test: `AppState.applyEnabledState()` calls `setMode` on
+    /// every brightness change too (e.g. once per `Slider` drag tick), with
+    /// the same `LightMode` each time. That must dim the in-progress
+    /// animation in place, not restart it from frame 0.
+    @Test func brightnessOnlyChangeDoesNotResetPlaybackPosition() throws {
+        let transport = MockHIDTransport()
+        try transport.open()
+        let streamer = FrameStreamer(transport: transport, interval: Self.dormantInterval)
+        let mode = LightMode.cycle(speed: 0)
+        let expectedFrames = PresetSequencer.frames(for: mode)
+
+        streamer.setMode(mode, brightness: 1)
+        streamer.start()
+        streamer.tick() // sends frame 0, advances frameIndex to 1
+
+        streamer.setMode(mode, brightness: 0.5) // same mode, brightness-only change
+        streamer.tick() // should send frame 1 scaled at 0.5, not frame 0 again
+
+        let dataPackets = transport.sentReports.enumerated().compactMap { index, report in
+            index % 2 == 1 ? report : nil
+        }
+        #expect(dataPackets == [
+            expectedFrames[0].dataPacket(),
+            expectedFrames[1].scaled(brightness: 0.5).dataPacket(),
+        ])
+    }
+
     @Test func stopsAndSurfacesErrorOnSendFailure() async throws {
         let transport = MockHIDTransport()
         try transport.open()

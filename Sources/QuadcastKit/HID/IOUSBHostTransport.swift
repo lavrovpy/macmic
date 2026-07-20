@@ -141,15 +141,21 @@ public final class IOUSBHostTransport: HIDTransport {
     /// regardless of success. This is the hardware bring-up diagnostic
     /// (`macmic-cli probe`); unlike `sendFeatureReport`, it does not stop at
     /// the first success and is not exercised by unit tests.
+    ///
+    /// Runs on `queue` for its whole duration, same as `sendFeatureReport`,
+    /// so a concurrent hotplug removal or `close()` can't `destroy()` a
+    /// device this is still reading `deviceDescriptor` from or sending to.
     public func probe() throws -> [USBProbeResult] {
-        let devices = queue.sync { Array(devicesByEntryID.values) }
-        guard !devices.isEmpty else {
-            throw HIDTransportError.deviceNotFound
-        }
-        return devices.map { device in
-            let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
-            let result = Self.sendControlTransfer(QuadcastPacket.headerPacket(), to: device)
-            return USBProbeResult(productID: productID, ioReturn: result)
+        try queue.sync {
+            let devices = Array(devicesByEntryID.values)
+            guard !devices.isEmpty else {
+                throw HIDTransportError.deviceNotFound
+            }
+            return devices.map { device in
+                let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
+                let result = Self.sendControlTransfer(QuadcastPacket.headerPacket(), to: device)
+                return USBProbeResult(productID: productID, ioReturn: result)
+            }
         }
     }
 
