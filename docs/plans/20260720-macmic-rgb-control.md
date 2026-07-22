@@ -141,6 +141,8 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 - [x] write tests: mode changes reach the mock transport; persistence round-trip (encode/decode `LightMode`); reconnect re-applies last mode; wake re-applies mode
 - [x] run `swift test` - must pass before task 8
 
+⚠️ Scope note: added a fourth persisted key, `lastSolidColor` (`UserDefaults`), tracked independently of `mode`/`brightness`/`isEnabled`. Without it, switching from Solid to a Cycle/Blink preset and back — or relaunching while a preset was active at quit — reset the color picker to white instead of remembering the last solid color. See `AppState.lastSolidColor` and its `AppStateTests`/`AppStateUITests` coverage.
+
 ### Task 8: Menu bar UI
 
 - [x] convert `MacMic` executable to a SwiftUI app: `@main` App with `MenuBarExtra("MacMic", systemImage: "mic.fill")` and `.menuBarExtraStyle(.window)`; set `NSApplication` activation policy `.accessory` (no Dock icon) in an app delegate
@@ -164,7 +166,7 @@ Mitigation 3 confirmed: a raw USB control transfer via `IOUSBHostDevice` (bypass
 
 - [x] verify all Overview requirements implemented: menu bar app, solid color picker, cycle + blink presets, brightness, hotplug + sleep/wake handling, persistence — confirmed in `Sources/MacMic/MacMicApp.swift` (`MenuBarExtra`), `ContentView.swift` (color picker, presets, brightness slider), `AppState.swift` (hotplug via `onDeviceConnected`/`onDeviceRemoved`, sleep/wake via `NSWorkspace` notifications, `UserDefaults` persistence)
 - [x] verify edge cases: mic unplugged at launch, unplugged mid-stream, invalid hex input in CLI, brightness extremes — covered by `AppStateTests.defaultsAreUsedWhenNothingPersistedYet`/`transportErrorMarksDisconnected`/`reconnectReAppliesLastMode`, `FrameTests.brightnessScalingClampsOutOfRangeInput`; manually confirmed `macmic-cli solid ZZZZZZ` rejects with a clear error (exit 1) and `macmic-cli solid FF0000 --brightness -5` streams without crashing (clamped)
-- [x] run full test suite `swift test` — all pass (57 tests, 10 suites, 0 failures)
+- [x] run full test suite `swift test` — all pass (57 tests, 10 suites, 0 failures at Task 10 time; grew to 75 tests, 11 suites during subsequent code-review fix passes, still 0 failures)
 - [x] run `.build/release/macmic-cli probe` once more; confirm success path unchanged — [x] manual test (skipped - QuadCast S not physically attached to this machine right now; confirmed absent via `system_profiler SPUSBDataType`); code path unchanged since Task 6's verified success (`IOUSBHostTransport`, PID `0x171f` → `kIOReturnSuccess`)
 - [x] build release + bundle script cleanly from a fresh clone state (`git clean -ndx` review, then build) — reviewed (`.build/`, `dist/`, `.claude/`, `.ralphex/progress/` are the only untracked/ignored paths, all expected); `rm -rf .build dist && swift build && swift build -c release && bash scripts/make-app.sh` all succeed
 - [x] fix any compiler warnings; run `swift build 2>&1` warning-free — confirmed warning-free in both debug and release configs
@@ -218,7 +220,8 @@ MacMic (SwiftUI MenuBarExtra, .accessory)
             ├─ PresetSequencer (LightMode → [Frame])
             ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
             └─ HIDTransport (protocol)
-                 ├─ IOKitHIDTransport (IOHIDManager)
+                 ├─ IOUSBHostTransport (raw USB control transfer — the transport that actually works, see Task 6)
+                 ├─ IOKitHIDTransport (IOHIDManager — doesn't reach the device on this hardware, kept for reference)
                  └─ MockHIDTransport (tests)
 macmic-cli (probe / solid / cycle / blink)
 ```

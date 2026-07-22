@@ -10,9 +10,11 @@ import IOKit
 
 /// Abstraction over the HID feature-report channel used to drive the
 /// QuadCast S display loop, so the streaming/mode logic in QuadcastKit can
-/// be tested without real hardware. `IOKitHIDTransport` is the real
-/// `IOHIDManager`-backed adapter; `MockHIDTransport` (test target) is used
-/// in unit tests.
+/// be tested without real hardware. `IOUSBHostTransport` is the adapter that
+/// actually reaches the device on this hardware; `IOKitHIDTransport` is kept
+/// for reference only (its `IOHIDManager` path cannot reach the vendor-page
+/// report handler — see `CLAUDE.md`'s Hardware notes). `MockHIDTransport`
+/// (test target) is used in unit tests.
 public protocol HIDTransport: AnyObject {
     /// Invoked when a matching QuadCast HID service becomes available.
     var onDeviceConnected: (() -> Void)? { get set }

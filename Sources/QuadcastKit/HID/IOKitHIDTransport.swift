@@ -153,6 +153,12 @@ public final class IOKitHIDTransport: HIDTransport {
         }
     }
 
+    /// One physical mic enumerates as two HID services (`0x171f`, `0x171d`;
+    /// see `productIDs`), each removed independently. Only surfaces
+    /// `onDeviceRemoved` once every matched service is gone, mirroring
+    /// `IOUSBHostTransport.handleRemoved`, so a lone termination of one
+    /// service wouldn't spuriously report the mic as disconnected while the
+    /// other is still present.
     private func handleDeviceRemoved(_ device: IOHIDDevice) {
         queue.async { [weak self] in
             guard let self else { return }
@@ -160,7 +166,9 @@ public final class IOKitHIDTransport: HIDTransport {
             if self.activeDevice == device {
                 self.activeDevice = nil
             }
-            DispatchQueue.main.async { self.onDeviceRemoved?() }
+            if self.matchedDevices.isEmpty {
+                DispatchQueue.main.async { self.onDeviceRemoved?() }
+            }
         }
     }
 }
