@@ -59,6 +59,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>MacMic plays your QuadCast S microphone through your speakers or headphones when you test it from the Audio page.</string>
 </dict>
 </plist>
 PLIST

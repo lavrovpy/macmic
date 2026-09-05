@@ -98,8 +98,19 @@ public final class AppState: ObservableObject {
     /// change arrives.
     static let audioEchoTolerance: Float = 0.01
 
+    /// The "Test Microphone" pass-through (mic → system default output).
+    /// Transient and never persisted: it stops when the input device
+    /// disappears, on sleep, when the Audio page goes away, and in `deinit`,
+    /// and is never resumed on its own.
+    @Published public private(set) var micTestState: MicrophoneMonitorState = .stopped
+
+    /// Normalized input level (`0...1`) while `micTestState` is `.running`;
+    /// `0` otherwise.
+    @Published public private(set) var micTestLevel: Float = 0
+
     private let transport: HIDTransport
     private let audioControl: AudioDeviceControl
+    private let microphoneMonitor: MicrophoneMonitor
     /// Internal (not private) so tests can call `tick()` for a deterministic
     /// synchronous send, the same pattern `FrameStreamerTests` uses.
     let streamer: FrameStreamer
@@ -113,6 +124,8 @@ public final class AppState: ObservableObject {
     ///   - audioControl: the `AudioDeviceControl` for gain/mute; also opened
     ///     here. Required (no default) so a test can never construct a real
     ///     Core Audio control by accident.
+    ///   - microphoneMonitor: the pass-through behind "Test Microphone";
+    ///     required for the same reason.
     ///   - defaults: where mode/brightness/enabled are persisted; injectable
     ///     for tests so they don't touch the real `UserDefaults.standard`.
     ///   - notificationCenter: source of sleep/wake notifications;
@@ -124,12 +137,14 @@ public final class AppState: ObservableObject {
     public init(
         transport: HIDTransport,
         audioControl: AudioDeviceControl,
+        microphoneMonitor: MicrophoneMonitor,
         defaults: UserDefaults = .standard,
         notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         streamerInterval: DispatchTimeInterval = .milliseconds(55)
     ) {
         self.transport = transport
         self.audioControl = audioControl
+        self.microphoneMonitor = microphoneMonitor
         self.streamer = FrameStreamer(transport: transport, interval: streamerInterval)
         self.defaults = defaults
         self.notificationCenter = notificationCenter
@@ -160,6 +175,8 @@ public final class AppState: ObservableObject {
         transport.onDeviceRemoved = { [weak self] in self?.handleDeviceRemoved() }
         streamer.onError = { [weak self] _ in self?.handleTransportError() }
         audioControl.onStateChanged = { [weak self] in self?.handleAudioStateChanged($0) }
+        microphoneMonitor.onStateChanged = { [weak self] in self?.handleMicTestStateChanged($0) }
+        microphoneMonitor.onLevel = { [weak self] in self?.handleMicTestLevel($0) }
 
         observerTokens.append(notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
@@ -185,6 +202,7 @@ public final class AppState: ObservableObject {
             notificationCenter.removeObserver(token)
         }
         streamer.stop()
+        microphoneMonitor.stop()
         transport.close()
         audioControl.close()
     }
@@ -220,6 +238,35 @@ public final class AppState: ObservableObject {
 
     private func handleAudioStateChanged(_ incoming: AudioDeviceSnapshot) {
         audio = Self.reconcile(current: audio, incoming: incoming, tolerance: Self.audioEchoTolerance)
+        if audio.input == nil {
+            stopMicTest()
+        }
+    }
+
+    // MARK: Microphone test
+
+    /// Starts passing the mic through the system default output. Ignored
+    /// while the input device is absent. The device id is read at call time:
+    /// the HAL reassigns it on every re-enumeration of the audio function.
+    public func startMicTest() {
+        guard audio.input != nil, let device = audioControl.deviceID(for: .input) else { return }
+        microphoneMonitor.start(inputDevice: device)
+    }
+
+    public func stopMicTest() {
+        microphoneMonitor.stop()
+    }
+
+    private func handleMicTestStateChanged(_ newState: MicrophoneMonitorState) {
+        micTestState = newState
+        if case .running = newState {} else {
+            micTestLevel = 0
+        }
+    }
+
+    private func handleMicTestLevel(_ level: Float) {
+        guard case .running = micTestState else { return }
+        micTestLevel = level
     }
 
     /// Merges a control-reported snapshot into the published one. Per
@@ -278,6 +325,7 @@ public final class AppState: ObservableObject {
 
     private func handleWillSleep() {
         streamer.stop()
+        stopMicTest()
     }
 
     private func handleDidWake() {

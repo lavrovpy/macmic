@@ -97,6 +97,12 @@ public protocol AudioDeviceControl: AnyObject {
     func setVolume(_ scalar: Float, for direction: AudioDirection) throws
     /// Sets the master mute of one direction.
     func setMuted(_ muted: Bool, for direction: AudioDirection) throws
+
+    /// The Core Audio object serving one direction, for handing to a
+    /// `MicrophoneMonitor`; `nil` while that device is absent. Ids are
+    /// reassigned on every re-enumeration, so callers must not cache one
+    /// across a `snapshot` change that drops the direction.
+    func deviceID(for direction: AudioDirection) -> AudioObjectID?
 }
 
 /// Errors surfaced by `AudioDeviceControl` implementations.

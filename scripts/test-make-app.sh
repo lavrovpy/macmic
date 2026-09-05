@@ -39,4 +39,17 @@ if ! grep -q "LSUIElement" "$INFO_PLIST"; then
 fi
 echo "PASS: $INFO_PLIST contains LSUIElement"
 
+# Without this key macOS kills the app the moment "Test Microphone" opens the mic.
+if ! grep -q "NSMicrophoneUsageDescription" "$INFO_PLIST"; then
+    echo "FAIL: $INFO_PLIST does not contain NSMicrophoneUsageDescription" >&2
+    exit 1
+fi
+echo "PASS: $INFO_PLIST contains NSMicrophoneUsageDescription"
+
+if ! plutil -lint "$INFO_PLIST" >/dev/null; then
+    echo "FAIL: $INFO_PLIST is not a well-formed property list" >&2
+    exit 1
+fi
+echo "PASS: $INFO_PLIST is well-formed"
+
 echo "==> All checks passed"

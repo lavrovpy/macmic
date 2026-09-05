@@ -77,7 +77,8 @@ struct MacMicApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState(
         transport: IOUSBHostTransport(),
-        audioControl: CoreAudioDeviceControl()
+        audioControl: CoreAudioDeviceControl(),
+        microphoneMonitor: AVAudioEngineMicrophoneMonitor()
     )
 
     var body: some Scene {

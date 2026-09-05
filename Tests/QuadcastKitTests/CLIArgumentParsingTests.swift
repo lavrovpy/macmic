@@ -103,6 +103,54 @@ import Testing
         #expect(parseOnOff("") == nil)
     }
 
+    @Test func parseAudioCommandTestDefaultsToTenSeconds() {
+        #expect(parseAudioCommand(["test"]) == .test(seconds: 10))
+        #expect(defaultTestSeconds == 10)
+    }
+
+    @Test func parseAudioCommandTestReadsSecondsOption() {
+        #expect(parseAudioCommand(["test", "--seconds", "4"]) == .test(seconds: 4))
+    }
+
+    @Test func parseAudioCommandTestRejectsMalformedSeconds() {
+        #expect(parseAudioCommand(["test", "--seconds"]) == nil)
+        #expect(parseAudioCommand(["test", "--seconds", "0"]) == nil)
+        #expect(parseAudioCommand(["test", "--seconds", "-3"]) == nil)
+        #expect(parseAudioCommand(["test", "--seconds", "2.5"]) == nil)
+        #expect(parseAudioCommand(["test", "--seconds", "ten"]) == nil)
+        #expect(parseAudioCommand(["test", "5"]) == nil)
+        #expect(parseAudioCommand(["test", "--seconds", "5", "extra"]) == nil)
+        #expect(parseAudioCommand(["test", "--minutes", "5"]) == nil)
+    }
+
+    @Test func parseTestSecondsBounds() {
+        #expect(parseTestSeconds([]) == 10)
+        #expect(parseTestSeconds(["--seconds", "1"]) == 1)
+        #expect(parseTestSeconds(["--seconds", "600"]) == 600)
+        #expect(parseTestSeconds(["--seconds", "0"]) == nil)
+        #expect(parseTestSeconds(["--seconds", ""]) == nil)
+    }
+
+    @Test func formatMonitorStateDescribesEveryState() {
+        #expect(formatMonitorState(.stopped) == "stopped")
+        #expect(formatMonitorState(.starting) == "starting…")
+        #expect(formatMonitorState(.running(outputDeviceName: "AirPods Pro")) == "running: playing through AirPods Pro")
+        #expect(formatMonitorState(.running(outputDeviceName: nil)) == "running: playing through default output")
+        #expect(formatMonitorState(.failed(.microphoneAccessDenied)).hasPrefix("failed: microphone access denied"))
+        #expect(formatMonitorState(.failed(.inputDeviceUnavailable)) == "failed: input device unavailable")
+        #expect(formatMonitorState(.failed(.engineFailed("boom"))) == "failed: audio engine error: boom")
+    }
+
+    @Test func formatLevelMeterIsFixedWidthAndClamped() {
+        #expect(formatLevelMeter(0) == "[....................]   0%")
+        #expect(formatLevelMeter(0.4) == "[########............]  40%")
+        #expect(formatLevelMeter(1) == "[####################] 100%")
+        #expect(formatLevelMeter(1.7) == "[####################] 100%")
+        #expect(formatLevelMeter(-0.2) == "[....................]   0%")
+        #expect(formatLevelMeter(0.5, cells: 4) == "[##..]  50%")
+        #expect(formatLevelMeter(0.3).count == formatLevelMeter(0.9).count)
+    }
+
     @Test func formatAudioStatusListsBothDirections() {
         let text = formatAudioStatus(.sample)
         #expect(text == """

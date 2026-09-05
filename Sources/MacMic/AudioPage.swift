@@ -37,6 +37,34 @@ struct AudioPage: View {
             }
             .disabled(!state.micControlsEnabled)
 
+            Section {
+                LabeledContent("Listen") {
+                    Button(state.isMicTestRunning ? "Stop Test" : "Start Test") {
+                        if state.isMicTestRunning {
+                            state.stopMicTest()
+                        } else {
+                            state.startMicTest()
+                        }
+                    }
+                }
+                LabeledContent("Level") {
+                    LevelMeter(level: state.micTestLevel)
+                }
+                Text(state.micTestStatusText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if state.isMicrophoneAccessDenied {
+                    Button("Open System Settings") {
+                        NSWorkspace.shared.open(Self.microphonePrivacySettingsURL)
+                    }
+                }
+            } header: {
+                Text("Test Microphone")
+            } footer: {
+                Text("Plays the microphone through your current output device so you can hear gain changes. Use headphones to avoid feedback.")
+            }
+            .disabled(!state.micTestControlsEnabled)
+
             Section("Headphone Monitoring") {
                 LabeledContent("Volume") {
                     levelRow(
@@ -57,7 +85,13 @@ struct AudioPage: View {
             }
         }
         .formStyle(.grouped)
+        // The pass-through is only meaningful while the user is looking at
+        // the gain slider; leaving the page (or closing the window) ends it.
+        .onDisappear { state.stopMicTest() }
     }
+
+    private static let microphonePrivacySettingsURL =
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
 
     private func levelRow(
         value: Binding<Float>,
@@ -77,6 +111,35 @@ struct AudioPage: View {
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
                 .frame(width: 110, alignment: .trailing)
+        }
+    }
+}
+
+/// Horizontal input level bar: green up to -18 dBFS-ish (0.7), yellow to
+/// 0.9, red above — the conventional "you're clipping" bands.
+private struct LevelMeter: View {
+    let level: Float
+
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.quaternary)
+                Capsule()
+                    .fill(color)
+                    .frame(width: geometry.size.width * CGFloat(min(max(level, 0), 1)))
+            }
+        }
+        .frame(height: 8)
+        .animation(.linear(duration: 0.08), value: level)
+        .accessibilityLabel("Input level")
+        .accessibilityValue("\(Int((level * 100).rounded())) percent")
+    }
+
+    private var color: Color {
+        switch level {
+        case ..<0.7: return .green
+        case ..<0.9: return .yellow
+        default: return .red
         }
     }
 }

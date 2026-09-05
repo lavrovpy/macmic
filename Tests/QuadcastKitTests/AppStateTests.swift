@@ -37,6 +37,7 @@ import Testing
         AppState(
             transport: transport,
             audioControl: audioControl,
+            microphoneMonitor: MockMicrophoneMonitor(),
             defaults: defaults ?? Self.freshDefaults(),
             notificationCenter: notificationCenter,
             streamerInterval: Self.dormantInterval

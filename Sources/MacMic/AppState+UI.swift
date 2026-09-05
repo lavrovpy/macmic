@@ -198,4 +198,45 @@ extension AppState {
         guard let decibels = level.decibels else { return percent }
         return "\(percent) (\(String(format: "%+.1f", decibels)) dB)"
     }
+
+    // MARK: Microphone test
+
+    /// Whether the pass-through is up or coming up — what the Start/Stop
+    /// button toggles on.
+    public var isMicTestRunning: Bool {
+        switch micTestState {
+        case .starting, .running: return true
+        case .stopped, .failed: return false
+        }
+    }
+
+    /// Whether the Test Microphone section should be enabled. Same condition
+    /// as `micControlsEnabled`; a separate name so the section doesn't
+    /// silently inherit gain-control semantics if that ever changes.
+    public var micTestControlsEnabled: Bool {
+        audio.input != nil
+    }
+
+    /// The last start failed on macOS microphone privacy — the one failure
+    /// the user fixes in System Settings rather than by retrying.
+    public var isMicrophoneAccessDenied: Bool {
+        micTestState == .failed(.microphoneAccessDenied)
+    }
+
+    public var micTestStatusText: String {
+        switch micTestState {
+        case .stopped:
+            return "Not running"
+        case .starting:
+            return "Starting…"
+        case .running(let outputDeviceName):
+            return "Playing through \(outputDeviceName ?? "the default output")"
+        case .failed(.microphoneAccessDenied):
+            return "Microphone access denied — allow MacMic in System Settings › Privacy & Security › Microphone"
+        case .failed(.inputDeviceUnavailable):
+            return "Microphone unavailable"
+        case .failed(.engineFailed(let detail)):
+            return "Failed: \(detail)"
+        }
+    }
 }

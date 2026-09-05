@@ -33,6 +33,7 @@ import Testing
         AppState(
             transport: transport,
             audioControl: audioControl,
+            microphoneMonitor: MockMicrophoneMonitor(),
             defaults: Self.freshDefaults(),
             notificationCenter: NotificationCenter(),
             streamerInterval: .seconds(3600)

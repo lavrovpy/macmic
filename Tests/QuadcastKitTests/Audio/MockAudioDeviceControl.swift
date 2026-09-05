@@ -6,6 +6,7 @@
 // the Free Software Foundation, version 2 of the License ONLY.
 // See LICENSE for the full license text.
 
+import CoreAudio
 @testable import QuadcastKit
 
 /// In-memory `AudioDeviceControl` for unit tests: records every write in
@@ -68,6 +69,16 @@ final class MockAudioDeviceControl: AudioDeviceControl {
         if echoesWrites {
             onStateChanged?(snapshot)
         }
+    }
+
+    /// Fixed fake ids so a test can assert which device a
+    /// `MicrophoneMonitor` was started on.
+    static let inputDeviceID: AudioObjectID = 4100
+    static let outputDeviceID: AudioObjectID = 4101
+
+    func deviceID(for direction: AudioDirection) -> AudioObjectID? {
+        guard snapshot[direction] != nil else { return nil }
+        return direction == .input ? Self.inputDeviceID : Self.outputDeviceID
     }
 
     /// Simulates a QuadCast audio device appearing with these values.

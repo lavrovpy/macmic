@@ -156,6 +156,10 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
         }
     }
 
+    public func deviceID(for direction: AudioDirection) -> AudioObjectID? {
+        queue.sync { tracked[direction]?.id }
+    }
+
     // MARK: - Pure helpers (unit-tested)
 
     /// `true` for a ModelUID carrying the QuadCast S's USB vendor:product;
@@ -221,7 +225,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     // MARK: - Property addresses
 
-    private static let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
+    static let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
 
     private static let deviceListAddress = AudioObjectPropertyAddress(
         mSelector: kAudioHardwarePropertyDevices,
@@ -253,7 +257,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
         )
     }
 
-    private static func globalAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
+    static func globalAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
         AudioObjectPropertyAddress(
             mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -391,7 +395,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
         return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
     }
 
-    private static func readString(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress) -> String? {
+    static func readString(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress) -> String? {
         var address = address
         var value: Unmanaged<CFString>?
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)

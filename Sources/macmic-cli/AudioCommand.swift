@@ -16,7 +16,12 @@ enum AudioCommand: Equatable {
     case setVolume(Float, AudioDirection)
     /// `mute` / `monitor-mute`.
     case setMuted(Bool, AudioDirection)
+    /// `test [--seconds N]`: pass the mic through the default output for
+    /// this many seconds.
+    case test(seconds: Int)
 }
+
+let defaultTestSeconds = 10
 
 let audioUsage = """
     Usage:
@@ -25,11 +30,15 @@ let audioUsage = """
       macmic-cli audio mute on|off
       macmic-cli audio monitor <0-100>
       macmic-cli audio monitor-mute on|off
+      macmic-cli audio test [--seconds N]
     """
 
 /// `nil` on any malformed form (unknown verb, missing/extra argument, value
 /// out of range).
 func parseAudioCommand(_ arguments: [String]) -> AudioCommand? {
+    if arguments.first == "test" {
+        return parseTestSeconds(Array(arguments.dropFirst())).map { .test(seconds: $0) }
+    }
     switch arguments.count {
     case 1 where arguments[0] == "status":
         return .status
@@ -46,6 +55,21 @@ func parseAudioCommand(_ arguments: [String]) -> AudioCommand? {
         default:
             return nil
         }
+    default:
+        return nil
+    }
+}
+
+/// The `--seconds N` option of `audio test`: no arguments →
+/// `defaultTestSeconds`; `N` must be a positive integer; any other token
+/// (or a bare `--seconds`) → `nil`.
+func parseTestSeconds(_ arguments: [String]) -> Int? {
+    switch arguments.count {
+    case 0:
+        return defaultTestSeconds
+    case 2 where arguments[0] == "--seconds":
+        guard let seconds = Int(arguments[1]), seconds > 0 else { return nil }
+        return seconds
     default:
         return nil
     }
@@ -89,4 +113,33 @@ private func formatLevel(_ level: AudioLevel?, valueName: String) -> String {
     }
     text += ", mute \(level.isMuted ? "on" : "off")"
     return text
+}
+
+/// One line describing a `MicrophoneMonitor` transition, e.g.
+/// `running: playing through AirPods Pro`.
+func formatMonitorState(_ state: MicrophoneMonitorState) -> String {
+    switch state {
+    case .stopped:
+        return "stopped"
+    case .starting:
+        return "starting…"
+    case let .running(outputDeviceName):
+        return "running: playing through \(outputDeviceName ?? "default output")"
+    case .failed(.microphoneAccessDenied):
+        return "failed: microphone access denied (System Settings > Privacy & Security > Microphone)"
+    case .failed(.inputDeviceUnavailable):
+        return "failed: input device unavailable"
+    case let .failed(.engineFailed(reason)):
+        return "failed: audio engine error: \(reason)"
+    }
+}
+
+/// A fixed-width text meter for a normalized `0...1` level, e.g.
+/// `[########............]  40%`; the width never changes so it can be
+/// redrawn in place with `\r`.
+func formatLevelMeter(_ level: Float, cells: Int = 20) -> String {
+    let clamped = min(max(level, 0), 1)
+    let filled = Int((clamped * Float(cells)).rounded())
+    let bar = String(repeating: "#", count: filled) + String(repeating: ".", count: cells - filled)
+    return String(format: "[%@] %3d%%", bar, Int((clamped * 100).rounded()))
 }

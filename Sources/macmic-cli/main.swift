@@ -23,6 +23,7 @@ let usage = """
       macmic-cli audio mute on|off
       macmic-cli audio monitor <0-100>
       macmic-cli audio monitor-mute on|off
+      macmic-cli audio test [--seconds N]
     """
 
 func fail(_ message: String) -> Never {
@@ -127,6 +128,76 @@ func streamUntilInterrupted(mode: LightMode, brightness: Double) -> Never {
     dispatchMain()
 }
 
+/// Passes the mic through the system default output for `seconds`, printing
+/// every monitor state change and a level meter redrawn in place. The
+/// device-list scan in `open()` is synchronous, but a mic that is still
+/// enumerating is only reported by a later HAL notification, so the input
+/// id is polled on the run loop for a few seconds before giving up.
+func runMicrophoneTest(control: CoreAudioDeviceControl, seconds: Int) -> Never {
+    let deadline = Date().addingTimeInterval(3)
+    var inputDevice = control.deviceID(for: .input)
+    while inputDevice == nil, Date() < deadline {
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        inputDevice = control.deviceID(for: .input)
+    }
+    guard let inputDevice else {
+        control.close()
+        fail("audio test: no QuadCast microphone input device found")
+    }
+
+    let monitor = AVAudioEngineMicrophoneMonitor()
+    var level: Float = 0
+    var meterShown = false
+    let clearMeter = {
+        if meterShown {
+            print()
+            meterShown = false
+        }
+    }
+    monitor.onStateChanged = { state in
+        clearMeter()
+        print(formatMonitorState(state))
+        if case .failed = state {
+            monitor.onStateChanged = nil
+            monitor.stop()
+            control.close()
+            exit(1)
+        }
+    }
+    monitor.onLevel = { level = $0 }
+
+    let meterTimer = DispatchSource.makeTimerSource(queue: .main)
+    meterTimer.schedule(deadline: .now(), repeating: 0.1)
+    meterTimer.setEventHandler {
+        guard case .running = monitor.state else { return }
+        print("\r\(formatLevelMeter(level))", terminator: "")
+        fflush(stdout)
+        meterShown = true
+    }
+    meterTimer.resume()
+
+    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
+        meterTimer.cancel()
+        monitor.stop()
+        control.close()
+        exit(0)
+    }
+
+    let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    signal(SIGINT, SIG_IGN)
+    signalSource.setEventHandler {
+        meterTimer.cancel()
+        monitor.stop()
+        control.close()
+        exit(0)
+    }
+    signalSource.resume()
+
+    print("testing microphone (input device \(inputDevice)) for \(seconds) s…")
+    monitor.start(inputDevice: inputDevice)
+    dispatchMain()
+}
+
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let command = arguments.first else {
     print(usage)
@@ -182,6 +253,8 @@ case "audio":
             try control.setVolume(scalar, for: direction)
         case let .setMuted(muted, direction):
             try control.setMuted(muted, for: direction)
+        case let .test(seconds):
+            runMicrophoneTest(control: control, seconds: seconds)
         }
     } catch {
         fail("audio: \(error)")
