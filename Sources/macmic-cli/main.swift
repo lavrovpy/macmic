@@ -18,6 +18,11 @@ let usage = """
       macmic-cli cycle [--speed N]
       macmic-cli blink <hex>...
       macmic-cli probe
+      macmic-cli audio status
+      macmic-cli audio gain <0-100>
+      macmic-cli audio mute on|off
+      macmic-cli audio monitor <0-100>
+      macmic-cli audio monitor-mute on|off
     """
 
 func fail(_ message: String) -> Never {
@@ -42,6 +47,19 @@ func openAndWaitForEnumeration() -> IOUSBHostTransport {
     }
     Thread.sleep(forTimeInterval: 0.3)
     return transport
+}
+
+/// Opens the Core Audio control. Unlike `openAndWaitForEnumeration`, no
+/// sleep is needed: `CoreAudioDeviceControl.open()` scans the HAL device
+/// list synchronously, so `snapshot` is valid as soon as this returns.
+func openAudioControl() -> CoreAudioDeviceControl {
+    let control = CoreAudioDeviceControl()
+    do {
+        try control.open()
+    } catch {
+        fail("failed to open Core Audio control: \(error)")
+    }
+    return control
 }
 
 func parseBrightness(_ arguments: [String]) -> Double {
@@ -150,6 +168,28 @@ case "probe":
     } catch {
         fail("probe failed: \(error)")
     }
+
+case "audio":
+    guard let audioCommand = parseAudioCommand(rest) else {
+        fail(audioUsage)
+    }
+    let control = openAudioControl()
+    do {
+        switch audioCommand {
+        case .status:
+            break
+        case let .setVolume(scalar, direction):
+            try control.setVolume(scalar, for: direction)
+        case let .setMuted(muted, direction):
+            try control.setMuted(muted, for: direction)
+        }
+    } catch {
+        fail("audio: \(error)")
+    }
+    let snapshot = control.snapshot
+    print(formatAudioStatus(snapshot))
+    control.close()
+    exit(snapshot.isAvailable ? 0 : 1)
 
 default:
     print(usage)

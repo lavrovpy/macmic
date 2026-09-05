@@ -38,10 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// lifetime (menu and window contents only exist while shown), which is
 /// what lets it turn `.macmicShowMainWindow` into an `openWindow` call.
 private struct MenuBarLabel: View {
+    @ObservedObject var state: AppState
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: "mic.fill")
+        Image(systemName: state.isMicMuted ? "mic.slash.fill" : "mic.fill")
             .onReceive(NotificationCenter.default.publisher(for: .macmicShowMainWindow)) { _ in
                 showMainWindow(openWindow)
             }
@@ -74,7 +75,10 @@ private func isMainWindow(_ window: NSWindow) -> Bool {
 @main
 struct MacMicApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var state = AppState(transport: IOUSBHostTransport())
+    @StateObject private var state = AppState(
+        transport: IOUSBHostTransport(),
+        audioControl: CoreAudioDeviceControl()
+    )
 
     var body: some Scene {
         // The MenuBarExtra must stay the first scene: SwiftUI auto-opens the
@@ -82,7 +86,7 @@ struct MacMicApp: App {
         MenuBarExtra {
             MenuBarMenu(state: state)
         } label: {
-            MenuBarLabel()
+            MenuBarLabel(state: state)
         }
         .menuBarExtraStyle(.menu)
 

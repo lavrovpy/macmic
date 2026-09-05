@@ -9,19 +9,27 @@
 import QuadcastKit
 import SwiftUI
 
-/// Connection status and the master lighting switch.
+/// Lighting and audio connection status and the master lighting switch.
 struct DevicePage: View {
     @ObservedObject var state: AppState
 
     var body: some View {
         Form {
             Section("Microphone") {
-                LabeledContent("Status") {
+                LabeledContent("Lighting") {
                     HStack(spacing: 6) {
                         Circle()
                             .fill(state.isConnected ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
                         Text(state.connectionStatusText)
+                    }
+                }
+                LabeledContent("Audio") {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(state.audio.isAvailable ? Color.green : Color.red)
+                            .frame(width: 8, height: 8)
+                        Text(state.audioStatusText)
                     }
                 }
                 Toggle("Lighting enabled", isOn: $state.isEnabled)

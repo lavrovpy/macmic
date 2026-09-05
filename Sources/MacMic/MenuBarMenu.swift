@@ -11,7 +11,8 @@ import QuadcastKit
 import SwiftUI
 
 /// The status item's pull-down menu: connection status, the enable toggle,
-/// a mode submenu, and the entry point to the main window. Deliberately a
+/// a mode submenu, the mic mute toggle, and the entry point to the main
+/// window. Deliberately a
 /// plain menu rather than a popover so the app has exactly one window.
 struct MenuBarMenu: View {
     @ObservedObject var state: AppState
@@ -29,6 +30,12 @@ struct MenuBarMenu: View {
             }
         }
         .disabled(!state.controlsEnabled)
+
+        // No keyboard shortcut: MenuBarExtra shortcuts only work while the
+        // menu is open, so one would only suggest a global hotkey that
+        // doesn't exist.
+        Toggle("Mute Microphone", isOn: $state.isMicMuted)
+            .disabled(!state.micControlsEnabled)
 
         Divider()
 

@@ -30,11 +30,13 @@ import Testing
 
     private func makeState(
         transport: HIDTransport,
+        audioControl: AudioDeviceControl = MockAudioDeviceControl(),
         defaults: UserDefaults? = nil,
         notificationCenter: NotificationCenter = NotificationCenter()
     ) -> AppState {
         AppState(
             transport: transport,
+            audioControl: audioControl,
             defaults: defaults ?? Self.freshDefaults(),
             notificationCenter: notificationCenter,
             streamerInterval: Self.dormantInterval

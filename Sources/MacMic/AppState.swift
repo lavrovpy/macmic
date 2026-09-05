@@ -15,7 +15,8 @@ import QuadcastKit
 /// UI-facing model that translates user intent (mode/brightness/enabled)
 /// into `FrameStreamer` calls, persists the last-used settings, and keeps
 /// lighting in sync with device hotplug and sleep/wake, so the menu bar UI
-/// (Task 8) only has to bind to `@Published` properties.
+/// (Task 8) only has to bind to `@Published` properties. Also owns the
+/// mic's Core Audio state (`audio`), which has its own hotplug lifecycle.
 public final class AppState: ObservableObject {
     private enum DefaultsKey {
         static let mode = "dev.alavreniuk.macmic.mode"
@@ -84,7 +85,21 @@ public final class AppState: ObservableObject {
         }
     }
 
+    /// Live mute/volume state of the mic's Core Audio devices. Not persisted:
+    /// macOS and the mic keep these values themselves, and every other app
+    /// (Sound settings, the mic's gain knob) writes the same properties.
+    /// Availability is independent of `isConnected` (lighting) — the audio
+    /// side is a different USB function.
+    @Published public private(set) var audio: AudioDeviceSnapshot = .unavailable
+
+    /// Incoming volume within this distance of the current value is treated
+    /// as the HAL echoing our own write (it quantizes the scalar) and doesn't
+    /// move the slider; external nudges under 1% are swallowed until a larger
+    /// change arrives.
+    static let audioEchoTolerance: Float = 0.01
+
     private let transport: HIDTransport
+    private let audioControl: AudioDeviceControl
     /// Internal (not private) so tests can call `tick()` for a deterministic
     /// synchronous send, the same pattern `FrameStreamerTests` uses.
     let streamer: FrameStreamer
@@ -95,6 +110,9 @@ public final class AppState: ObservableObject {
     /// - Parameters:
     ///   - transport: the `HIDTransport` to stream frames over; `open()` is
     ///     called as part of initialization.
+    ///   - audioControl: the `AudioDeviceControl` for gain/mute; also opened
+    ///     here. Required (no default) so a test can never construct a real
+    ///     Core Audio control by accident.
     ///   - defaults: where mode/brightness/enabled are persisted; injectable
     ///     for tests so they don't touch the real `UserDefaults.standard`.
     ///   - notificationCenter: source of sleep/wake notifications;
@@ -105,11 +123,13 @@ public final class AppState: ObservableObject {
     ///     manually instead of waiting on the real timer.
     public init(
         transport: HIDTransport,
+        audioControl: AudioDeviceControl,
         defaults: UserDefaults = .standard,
         notificationCenter: NotificationCenter = NSWorkspace.shared.notificationCenter,
         streamerInterval: DispatchTimeInterval = .milliseconds(55)
     ) {
         self.transport = transport
+        self.audioControl = audioControl
         self.streamer = FrameStreamer(transport: transport, interval: streamerInterval)
         self.defaults = defaults
         self.notificationCenter = notificationCenter
@@ -139,6 +159,7 @@ public final class AppState: ObservableObject {
         transport.onDeviceConnected = { [weak self] in self?.handleDeviceConnected() }
         transport.onDeviceRemoved = { [weak self] in self?.handleDeviceRemoved() }
         streamer.onError = { [weak self] _ in self?.handleTransportError() }
+        audioControl.onStateChanged = { [weak self] in self?.handleAudioStateChanged($0) }
 
         observerTokens.append(notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
@@ -155,6 +176,8 @@ public final class AppState: ObservableObject {
         // here — otherwise the UI would show "connected" even with no mic
         // plugged in.
         try? transport.open()
+        // Same contract: presence arrives via `onStateChanged`, not here.
+        try? audioControl.open()
     }
 
     deinit {
@@ -163,6 +186,66 @@ public final class AppState: ObservableObject {
         }
         streamer.stop()
         transport.close()
+        audioControl.close()
+    }
+
+    // MARK: Audio
+
+    /// Sets one direction's volume (`0...1`, clamped). Optimistic: `audio`
+    /// moves first so a dragging `Slider` tracks the thumb, then the write
+    /// goes out; a failed write reverts to the control's own snapshot.
+    /// Ignored while that direction's device is absent.
+    public func setAudioVolume(_ scalar: Float, for direction: AudioDirection) {
+        guard audio[direction] != nil else { return }
+        let clamped = min(max(scalar, 0), 1)
+        audio[direction]?.volume = clamped
+        do {
+            try audioControl.setVolume(clamped, for: direction)
+        } catch {
+            audio = audioControl.snapshot
+        }
+    }
+
+    /// Sets one direction's master mute; same optimistic/revert shape as
+    /// `setAudioVolume`.
+    public func setAudioMuted(_ muted: Bool, for direction: AudioDirection) {
+        guard audio[direction] != nil else { return }
+        audio[direction]?.isMuted = muted
+        do {
+            try audioControl.setMuted(muted, for: direction)
+        } catch {
+            audio = audioControl.snapshot
+        }
+    }
+
+    private func handleAudioStateChanged(_ incoming: AudioDeviceSnapshot) {
+        audio = Self.reconcile(current: audio, incoming: incoming, tolerance: Self.audioEchoTolerance)
+    }
+
+    /// Merges a control-reported snapshot into the published one. Per
+    /// direction: an availability change, a mute change, or a volume delta
+    /// above `tolerance` takes the incoming level; anything closer is the
+    /// HAL's quantized echo of our own write, so the current volume is kept
+    /// and only the fresh `decibels` is taken (the dB label stays truthful).
+    static func reconcile(
+        current: AudioDeviceSnapshot,
+        incoming: AudioDeviceSnapshot,
+        tolerance: Float
+    ) -> AudioDeviceSnapshot {
+        var result = incoming
+        for direction in AudioDirection.allCases {
+            guard let currentLevel = current[direction], let incomingLevel = incoming[direction] else { continue }
+            if currentLevel.isMuted != incomingLevel.isMuted
+                || abs(incomingLevel.volume - currentLevel.volume) > tolerance {
+                continue
+            }
+            result[direction] = AudioLevel(
+                volume: currentLevel.volume,
+                isMuted: currentLevel.isMuted,
+                decibels: incomingLevel.decibels
+            )
+        }
+        return result
     }
 
     /// Starts (or restarts, picking up the current `mode`/`brightness`) or

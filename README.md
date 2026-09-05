@@ -11,7 +11,8 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - Brightness control
 - Persists your last color/mode/brightness across launches
 - Recovers automatically on device hotplug and sleep/wake
-- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Device) for everything else
+- Microphone gain and mute, headphone-monitoring volume and mute — the same controls as System Settings → Sound, kept in sync with the mic's gain knob and other apps
+- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio, Device) for everything else
 
 Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
 
@@ -35,13 +36,15 @@ Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
 - Connection status line
 - **Lighting Enabled** — turn streaming on/off without quitting
 - **Mode** submenu — Solid / Rainbow Cycle / Blink
+- **Mute Microphone** — the mic's system input mute (the menu bar icon shows a slashed mic while muted)
 - **Open MacMic…** (⌘,) — opens the main window
 - **Quit MacMic**
 
-The main window (also opened by launching the app again from Finder or Launchpad) has two sidebar pages:
+The main window (also opened by launching the app again from Finder or Launchpad) has three sidebar pages:
 
 - **Lighting** — mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
-- **Device** — connection status and the lighting on/off switch
+- **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa.
+- **Device** — lighting and audio connection status and the lighting on/off switch
 
 There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
 
@@ -51,6 +54,11 @@ swift run macmic-cli solid FF0000               # stream solid red until Ctrl-C
 swift run macmic-cli solid 00FF00 --brightness 0.5
 swift run macmic-cli cycle --speed 50           # rainbow cycle, speed 0-100
 swift run macmic-cli blink FF0000 0000FF        # blink through a color list
+swift run macmic-cli audio status               # mic gain/mute + monitoring volume/mute
+swift run macmic-cli audio gain 40              # mic gain, 0-100
+swift run macmic-cli audio mute on              # mic mute on|off
+swift run macmic-cli audio monitor 30           # headphone-monitoring volume, 0-100
+swift run macmic-cli audio monitor-mute off     # monitoring mute on|off
 ```
 
 ## How it works
@@ -61,20 +69,25 @@ Frames are generated ahead of time by `PresetSequencer` — a solid color is a o
 
 On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/20260720-macmic-rgb-control.md) for the full investigation.
 
+Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
+
 ### Architecture
 
 ```
 MacMic (SwiftUI MenuBarExtra, .accessory)
-  └─ AppState (persistence, hotplug, sleep/wake)
+  └─ AppState (persistence, hotplug, sleep/wake, audio state)
        └─ QuadcastKit
             ├─ FrameStreamer (55 ms DispatchSourceTimer)
             ├─ PresetSequencer (LightMode → [Frame])
             ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
-            └─ HIDTransport (protocol)
-                 ├─ IOUSBHostTransport (raw USB control transfer — the working path)
-                 ├─ IOKitHIDTransport (IOHIDManager — kept for reference/other systems)
-                 └─ MockHIDTransport (tests)
-macmic-cli (probe / solid / cycle / blink)
+            ├─ HIDTransport (protocol) — lighting
+            │    ├─ IOUSBHostTransport (raw USB control transfer — the working path)
+            │    ├─ IOKitHIDTransport (IOHIDManager — kept for reference/other systems)
+            │    └─ MockHIDTransport (tests)
+            └─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
+                 ├─ CoreAudioDeviceControl (Core Audio HAL)
+                 └─ MockAudioDeviceControl (tests)
+macmic-cli (probe / solid / cycle / blink / audio)
 ```
 
 ## Credits
@@ -90,6 +103,9 @@ GPLv2-only, matching the upstream QuadcastRGB license. See [LICENSE](LICENSE).
 - No per-zone color control (upper/lower zones always match)
 - No wave, lightning, or pulse modes
 - No launch-at-login
+- Polar pattern is a physical knob on the QuadCast S and cannot be set by software
+- Audio gain/mute are not restored on reconnect — the device and macOS remember them, and restoring a saved value would fight the mic's gain knob and every other app; a "remember and restore" option is a possible future feature
+- Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
 - Not code-signed with a Developer ID or notarized — Gatekeeper will warn on first launch
 - Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
 - Unsandboxed: MacMic needs raw USB device access, so it isn't (and can't easily be) distributed via the Mac App Store

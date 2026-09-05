@@ -241,3 +241,4 @@ macmic-cli (probe / solid / cycle / blink)
 **External/publishing**:
 - Create GitHub repo, push, add screenshot to README
 - Optional later: Developer ID signing + notarization for distribution, Sparkle updates, launch-at-login (SMAppService), per-zone colors, remaining QuadcastRGB modes (wave, lightning, pulse), HP-VID QuadCast 2/2S support
+- Audio: an option to remember and restore mic gain / monitoring volume on reconnect (deliberately not done in the first audio pass — the device and macOS keep these values, and restoring would fight the gain knob and other apps); observe whether host-side mute lights the red mute LED and record it in CLAUDE.md

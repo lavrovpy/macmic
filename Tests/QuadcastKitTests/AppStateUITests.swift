@@ -26,9 +26,13 @@ import Testing
         return defaults
     }
 
-    private func makeState(transport: HIDTransport = MockHIDTransport()) -> AppState {
+    private func makeState(
+        transport: HIDTransport = MockHIDTransport(),
+        audioControl: AudioDeviceControl = MockAudioDeviceControl()
+    ) -> AppState {
         AppState(
             transport: transport,
+            audioControl: audioControl,
             defaults: Self.freshDefaults(),
             notificationCenter: NotificationCenter(),
             streamerInterval: .seconds(3600)

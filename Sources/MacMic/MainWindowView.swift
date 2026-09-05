@@ -11,13 +11,14 @@ import SwiftUI
 
 /// The pages of the main window's sidebar.
 enum MainWindowPage: String, CaseIterable, Identifiable {
-    case lighting, device
+    case lighting, audio, device
 
     var id: Self { self }
 
     var title: String {
         switch self {
         case .lighting: return "Lighting"
+        case .audio: return "Audio"
         case .device: return "Device"
         }
     }
@@ -25,6 +26,7 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .lighting: return "light.max"
+        case .audio: return "waveform"
         case .device: return "mic"
         }
     }
@@ -52,6 +54,8 @@ struct MainWindowView: View {
             switch page ?? .lighting {
             case .lighting:
                 LightingPage(state: state)
+            case .audio:
+                AudioPage(state: state)
             case .device:
                 DevicePage(state: state)
             }
