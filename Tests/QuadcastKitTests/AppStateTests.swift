@@ -100,6 +100,36 @@ import Testing
         #expect(second.lastSolidColor == color)
     }
 
+    /// The settings window's speed slider and blink color list must come back
+    /// after a relaunch even when a different mode ended up active, the same
+    /// way `lastSolidColor` does.
+    @Test func lastPresetSpeedAndBlinkColorsSurviveRelaunchWhileSolidIsActive() throws {
+        let defaults = Self.freshDefaults()
+        let colors = [RGBColor(r: 1, g: 2, b: 3), RGBColor(r: 4, g: 5, b: 6)]
+
+        let first = makeState(transport: MockHIDTransport(), defaults: defaults)
+        first.mode = .blink(colors: colors, speed: 88)
+        first.mode = .cycle(speed: 12)
+        first.mode = .solid(RGBColor(r: 0, g: 0, b: 0))
+
+        let second = makeState(transport: MockHIDTransport(), defaults: defaults)
+
+        #expect(second.mode == .solid(RGBColor(r: 0, g: 0, b: 0)))
+        #expect(second.lastPresetSpeed == 12)
+        #expect(second.lastBlinkColors == colors)
+    }
+
+    @Test func corruptedPersistedBlinkSettingsFallBackToDefaults() throws {
+        let defaults = Self.freshDefaults()
+        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.lastBlinkColors")
+        defaults.set(999, forKey: "dev.alavreniuk.macmic.lastPresetSpeed")
+
+        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
+
+        #expect(state.lastBlinkColors == nil)
+        #expect(state.lastPresetSpeed == 100)
+    }
+
     @Test func defaultsAreUsedWhenNothingPersistedYet() throws {
         let state = makeState(transport: MockHIDTransport())
 

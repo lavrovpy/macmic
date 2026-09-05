@@ -94,7 +94,7 @@ public enum PresetSequencer {
     }
 
     /// `SPEED_RANGE(MIN, MAX, SPD)` from rgbmodes.h, clamped to `0...100`.
-    static func clampSpeed(_ speed: Int) -> Int {
+    public static func clampSpeed(_ speed: Int) -> Int {
         min(max(speed, 0), 100)
     }
 

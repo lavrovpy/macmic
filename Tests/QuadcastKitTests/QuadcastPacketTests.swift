@@ -24,6 +24,12 @@ import Testing
 }
 
 @Suite struct RGBColorTests {
+    @Test func hexStringRoundTripsThroughHexInit() throws {
+        let color = RGBColor(r: 0x0A, g: 0xBC, b: 0xFF)
+        #expect(color.hexString == "0ABCFF")
+        #expect(RGBColor(hex: color.hexString) == color)
+    }
+
     @Test func hexParsingSucceedsWithoutHash() {
         #expect(RGBColor(hex: "FF0000") == RGBColor(r: 0xFF, g: 0, b: 0))
     }

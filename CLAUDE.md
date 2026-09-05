@@ -25,7 +25,7 @@ There is no separate lint step; `swift build` must be warning-free (checked in T
 ## Architecture
 
 ```
-MacMic (SwiftUI MenuBarExtra, .accessory — no Dock icon)
+MacMic (SwiftUI MenuBarExtra menu + one sidebar-navigation Window, .accessory — no Dock icon)
   └─ AppState (persistence, hotplug, sleep/wake)
        └─ QuadcastKit
             ├─ FrameStreamer (55 ms DispatchSourceTimer display loop)
@@ -56,9 +56,13 @@ macmic-cli (probe / solid / cycle / blink — thin executable over QuadcastKit)
 - `Sources/QuadcastKit/HID/IOKitHIDTransport.swift` — `IOHIDManager`-based transport (non-functional on this hardware; see below)
 - `Sources/QuadcastKit/FrameStreamer.swift` — owns the 55 ms timer, sends header+data packets in a loop, swaps `LightMode` atomically
 - `Sources/MacMic/AppState.swift` — `@Observable`/`ObservableObject` model: persistence (`UserDefaults`), hotplug, sleep/wake, translates UI intent into `FrameStreamer` calls
-- `Sources/MacMic/AppState+UI.swift` — UI-facing derivations on top of `AppState`: `solidColor` (falls back to `lastSolidColor`, not white, when a preset is active), `controlsEnabled`, `connectionStatusText`
+- `Sources/MacMic/AppState+UI.swift` — UI-facing derivations on top of `AppState`, shared by the popover and the settings window: `LightModeKind` + `modeKind` (switching restores each mode's remembered payload), `solidColor` (falls back to `lastSolidColor`, not white, when a preset is active), `presetSpeed`, `blinkColors` (falls back to `lastBlinkColors`, then `[lastSolidColor]` if Blink was never used), `controlsEnabled`, `connectionStatusText`
 - `Sources/MacMic/ColorConversion.swift` — pure `Color` ↔ `QuadcastKit.RGBColor` conversion via `NSColor`'s sRGB space; testable without a menu bar
-- `Sources/MacMic/ContentView.swift`, `MacMicApp.swift` — SwiftUI menu bar surface
+- `Sources/MacMic/MenuBarMenu.swift` — the `MenuBarExtra` pull-down menu (`.menu` style, not a popover): status, enable toggle, mode submenu, "Open MacMic…", Quit
+- `Sources/MacMic/MainWindowView.swift` — the app's single window: `NavigationSplitView` with a sidebar of `MainWindowPage`s (Lighting, Device)
+- `Sources/MacMic/LightingPage.swift`, `DevicePage.swift` — the pages' grouped `Form`s: mode picker, per-mode color/speed, brightness; status + enable toggle
+- `Sources/MacMic/InlineColorEditor.swift` — swatches + RGB sliders + hex field bound to `RGBColor`; used instead of `ColorPicker` because that opens the system Colors panel as a second floating window
+- `Sources/MacMic/MacMicApp.swift` — scenes: the `MenuBarExtra` first (so nothing auto-opens at launch) and a single `Window(id: MainWindowView.windowID)`; the app stays `.accessory`, so `showMainWindow` orders the window front explicitly (`openWindow` alone leaves it behind the frontmost app on macOS 14+), and re-launching the app (`applicationShouldHandleReopen`) opens the window
 - `Sources/macmic-cli/main.swift` — `probe` / `solid` / `cycle` / `blink` subcommands
 
 ### Testing approach

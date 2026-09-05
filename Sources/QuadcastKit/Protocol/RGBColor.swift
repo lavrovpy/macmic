@@ -33,6 +33,11 @@ public struct RGBColor: Equatable, Sendable, Codable {
         self.b = UInt8(value & 0xFF)
     }
 
+    /// `RRGGBB`, uppercase, the format `init?(hex:)` accepts.
+    public var hexString: String {
+        String(format: "%02X%02X%02X", r, g, b)
+    }
+
     /// Returns this color with each channel multiplied by `brightness`,
     /// which is clamped to `0...1` before scaling.
     public func scaled(brightness: Double) -> RGBColor {

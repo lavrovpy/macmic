@@ -22,6 +22,8 @@ public final class AppState: ObservableObject {
         static let brightness = "dev.alavreniuk.macmic.brightness"
         static let isEnabled = "dev.alavreniuk.macmic.isEnabled"
         static let lastSolidColor = "dev.alavreniuk.macmic.lastSolidColor"
+        static let lastPresetSpeed = "dev.alavreniuk.macmic.lastPresetSpeed"
+        static let lastBlinkColors = "dev.alavreniuk.macmic.lastBlinkColors"
     }
 
     /// Whether a QuadCast HID/USB service is currently matched. Controls
@@ -30,9 +32,18 @@ public final class AppState: ObservableObject {
 
     @Published public var mode: LightMode {
         didSet {
-            if case .solid(let rgb) = mode {
+            switch mode {
+            case .solid(let rgb):
                 lastSolidColor = rgb
                 defaults.set((try? JSONEncoder().encode(rgb)) ?? Data(), forKey: DefaultsKey.lastSolidColor)
+            case .cycle(let speed):
+                lastPresetSpeed = speed
+                defaults.set(speed, forKey: DefaultsKey.lastPresetSpeed)
+            case .blink(let colors, let speed):
+                lastPresetSpeed = speed
+                lastBlinkColors = colors
+                defaults.set(speed, forKey: DefaultsKey.lastPresetSpeed)
+                defaults.set((try? JSONEncoder().encode(colors)) ?? Data(), forKey: DefaultsKey.lastBlinkColors)
             }
             defaults.set((try? JSONEncoder().encode(mode)) ?? Data(), forKey: DefaultsKey.mode)
             applyEnabledState()
@@ -44,6 +55,20 @@ public final class AppState: ObservableObject {
     /// doesn't reset the picker to white. Backs `AppState.solidColor`'s
     /// non-solid fallback (Task 8).
     @Published public private(set) var lastSolidColor: QuadcastKit.RGBColor
+
+    /// The speed of the last active preset (`.cycle`/`.blink`), kept across
+    /// mode switches so returning to a preset resumes at the speed the user
+    /// set rather than `AppState.defaultPresetSpeed`. Backs
+    /// `AppState.presetSpeed` while `.solid` is active.
+    @Published public private(set) var lastPresetSpeed: Int
+
+    /// The color list of the last active `.blink` mode, kept while another
+    /// mode is active so switching away and back doesn't collapse a
+    /// multi-color blink to a single color. `nil` until Blink has ever been
+    /// used, so the UI can seed the first blink from the *current*
+    /// `lastSolidColor` (`AppState.blinkColors`) instead of a color frozen at
+    /// launch. Never empty: an empty list would produce zero frames.
+    @Published public private(set) var lastBlinkColors: [QuadcastKit.RGBColor]?
 
     @Published public var brightness: Double {
         didSet {
@@ -92,10 +117,23 @@ public final class AppState: ObservableObject {
         self.mode = loadedMode
         self.brightness = Self.loadBrightness(from: defaults)
         self.isEnabled = Self.loadIsEnabled(from: defaults)
+        let loadedSolidColor: QuadcastKit.RGBColor
         if case .solid(let rgb) = loadedMode {
-            self.lastSolidColor = rgb
+            loadedSolidColor = rgb
         } else {
-            self.lastSolidColor = Self.loadLastSolidColor(from: defaults)
+            loadedSolidColor = Self.loadLastSolidColor(from: defaults)
+        }
+        self.lastSolidColor = loadedSolidColor
+        switch loadedMode {
+        case .solid:
+            self.lastPresetSpeed = Self.loadLastPresetSpeed(from: defaults)
+            self.lastBlinkColors = Self.loadLastBlinkColors(from: defaults)
+        case .cycle(let speed):
+            self.lastPresetSpeed = speed
+            self.lastBlinkColors = Self.loadLastBlinkColors(from: defaults)
+        case .blink(let colors, let speed):
+            self.lastPresetSpeed = speed
+            self.lastBlinkColors = colors.isEmpty ? nil : colors
         }
 
         transport.onDeviceConnected = { [weak self] in self?.handleDeviceConnected() }
@@ -187,5 +225,19 @@ public final class AppState: ObservableObject {
             return QuadcastKit.RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)
         }
         return rgb
+    }
+
+    private static func loadLastPresetSpeed(from defaults: UserDefaults) -> Int {
+        guard defaults.object(forKey: DefaultsKey.lastPresetSpeed) != nil else { return defaultPresetSpeed }
+        return PresetSequencer.clampSpeed(defaults.integer(forKey: DefaultsKey.lastPresetSpeed))
+    }
+
+    private static func loadLastBlinkColors(from defaults: UserDefaults) -> [QuadcastKit.RGBColor]? {
+        guard let data = defaults.data(forKey: DefaultsKey.lastBlinkColors),
+              let colors = try? JSONDecoder().decode([QuadcastKit.RGBColor].self, from: data),
+              !colors.isEmpty else {
+            return nil
+        }
+        return colors
     }
 }

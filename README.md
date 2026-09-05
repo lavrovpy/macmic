@@ -11,7 +11,7 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - Brightness control
 - Persists your last color/mode/brightness across launches
 - Recovers automatically on device hotplug and sleep/wake
-- Menu bar only — no Dock icon, no separate window
+- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Device) for everything else
 
 Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
 
@@ -30,13 +30,18 @@ open dist/MacMic.app
 
 ## Usage
 
-Launch `MacMic.app`; a mic icon appears in the menu bar. Click it to open the popover:
+Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
 
-- **Enabled** toggle — turn streaming on/off without quitting
-- **Color** picker — sets the solid color
-- **Solid / Rainbow Cycle / Blink** buttons — switch preset
-- **Brightness** slider — scales all channels
-- Status line shows whether a QuadCast S is currently reachable
+- Connection status line
+- **Lighting Enabled** — turn streaming on/off without quitting
+- **Mode** submenu — Solid / Rainbow Cycle / Blink
+- **Open MacMic…** (⌘,) — opens the main window
+- **Quit MacMic**
+
+The main window (also opened by launching the app again from Finder or Launchpad) has two sidebar pages:
+
+- **Lighting** — mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
+- **Device** — connection status and the lighting on/off switch
 
 There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
 
