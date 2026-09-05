@@ -105,8 +105,13 @@ public final class AppState: ObservableObject {
     @Published public private(set) var micTestState: MicrophoneMonitorState = .stopped
 
     /// Normalized input level (`0...1`) while `micTestState` is `.running`;
-    /// `0` otherwise.
+    /// `0` otherwise. Reports the clip instead of the live input while one
+    /// is playing back.
     @Published public private(set) var micTestLevel: Float = 0
+
+    /// The record/playback half of the test; only ever leaves `.idle` while
+    /// `micTestState` is `.running`, and loses its clip when the test stops.
+    @Published public private(set) var micRecorderState: MicrophoneRecorderState = .idle(clipDuration: nil)
 
     private let transport: HIDTransport
     private let audioControl: AudioDeviceControl
@@ -177,6 +182,7 @@ public final class AppState: ObservableObject {
         audioControl.onStateChanged = { [weak self] in self?.handleAudioStateChanged($0) }
         microphoneMonitor.onStateChanged = { [weak self] in self?.handleMicTestStateChanged($0) }
         microphoneMonitor.onLevel = { [weak self] in self?.handleMicTestLevel($0) }
+        microphoneMonitor.onRecorderStateChanged = { [weak self] in self?.micRecorderState = $0 }
 
         observerTokens.append(notificationCenter.addObserver(
             forName: NSWorkspace.willSleepNotification, object: nil, queue: nil
@@ -255,6 +261,32 @@ public final class AppState: ObservableObject {
 
     public func stopMicTest() {
         microphoneMonitor.stop()
+    }
+
+    /// Records the live input into a clip (up to `micMaxClipDuration`),
+    /// replacing the previous one. Ignored unless the test is running.
+    public func startMicRecording() {
+        guard case .running = micTestState else { return }
+        microphoneMonitor.startRecording()
+    }
+
+    public func stopMicRecording() {
+        microphoneMonitor.stopRecording()
+    }
+
+    /// Plays the recorded clip through the test's output, muting the live
+    /// pass-through meanwhile. Ignored unless the test is running.
+    public func playMicRecording() {
+        guard case .running = micTestState else { return }
+        microphoneMonitor.startPlayback()
+    }
+
+    public func stopMicPlayback() {
+        microphoneMonitor.stopPlayback()
+    }
+
+    public var micMaxClipDuration: TimeInterval {
+        microphoneMonitor.maxClipDuration
     }
 
     private func handleMicTestStateChanged(_ newState: MicrophoneMonitorState) {

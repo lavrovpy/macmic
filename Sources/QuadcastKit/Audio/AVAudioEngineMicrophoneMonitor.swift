@@ -39,16 +39,28 @@ import Foundation
 /// device list changing (a vanished mic fails the restart's validation with
 /// `.inputDeviceUnavailable`).
 ///
+/// Record/playback reuse the running graph: the input tap appends to a
+/// `ClipRecorder` while recording, and an `AVAudioPlayerNode` attached to
+/// the same engine plays the clip into the main mixer (so it reaches the
+/// same output as the pass-through) with `inputNode.volume` at 0 meanwhile.
+/// A recording in progress when the engine restarts is kept as the clip;
+/// a playback in progress is cut short. `stop`, `start` and any failure
+/// drop the clip.
+///
 /// Not thread-safe: `start`/`stop` are main-thread calls and all state lives
 /// on the main thread. The only off-main code is the input tap, which hops
-/// to main at most every `levelInterval` (see `LevelThrottle`). `generation`
-/// invalidates anything still in flight — a permission prompt, a
-/// rate-pinning wait, a tap buffer, a restart — from a session that has
-/// since been stopped or restarted.
+/// to main at most every `levelInterval` (see `LevelThrottle`) and appends
+/// to the recorder under its lock. `generation` invalidates anything still
+/// in flight — a permission prompt, a rate-pinning wait, a tap buffer, a
+/// restart — from a session that has since been stopped or restarted;
+/// `playbackGeneration` does the same for a player node completion.
 public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     public var onStateChanged: ((MicrophoneMonitorState) -> Void)?
     public var onLevel: ((Float) -> Void)?
     public private(set) var state: MicrophoneMonitorState = .stopped
+    public var onRecorderStateChanged: ((MicrophoneRecorderState) -> Void)?
+    public private(set) var recorderState: MicrophoneRecorderState = .idle(clipDuration: nil)
+    public let maxClipDuration: TimeInterval = 30
 
     static let tapBufferSize: AVAudioFrameCount = 1024
     /// The tap fires per buffer (~47 Hz at 48 kHz); `onLevel` is decimated
@@ -57,6 +69,8 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     /// of the bar) of what was last delivered.
     static let levelInterval: TimeInterval = 1.0 / 25
     static let levelEpsilon: Float = 0.005
+    /// How often `elapsed` advances in `.recording` / `.playing`.
+    static let progressInterval: TimeInterval = 0.1
     static let aggregateDeviceName = "MacMic Microphone Test"
     /// Polling interval and cap for the mic's nominal rate to read back
     /// after pinning; the HAL applies the change asynchronously.
@@ -77,6 +91,17 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     private var generation = 0
     private var restartScheduled = false
 
+    private let recorder = ClipRecorder()
+    /// The format the running session's input tap delivers; clips are
+    /// allocated in it.
+    private var inputFormat: AVAudioFormat?
+    private var clip: AVAudioPCMBuffer?
+    private var player: AVAudioPlayerNode?
+    /// The format `player` is currently connected to the mixer with.
+    private var playerFormat: AVAudioFormat?
+    private var playbackGeneration = 0
+    private var progressTimer: DispatchSourceTimer?
+
     public init() {}
 
     deinit {
@@ -85,6 +110,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
 
     public func start(inputDevice: AudioObjectID) {
         tearDown()
+        settleRecorder(keepClip: false)
         generation += 1
         let session = generation
         self.inputDevice = inputDevice
@@ -100,20 +126,21 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
                     if granted {
                         self.prepareInputDevice(session: session)
                     } else {
-                        self.transition(to: .failed(.microphoneAccessDenied))
+                        self.fail(.microphoneAccessDenied)
                     }
                 }
             }
         case .denied, .restricted:
-            transition(to: .failed(.microphoneAccessDenied))
+            fail(.microphoneAccessDenied)
         @unknown default:
-            transition(to: .failed(.microphoneAccessDenied))
+            fail(.microphoneAccessDenied)
         }
     }
 
     public func stop() {
         generation += 1
         tearDown()
+        settleRecorder(keepClip: false)
         inputDevice = nil
         if state != .stopped {
             transition(to: .stopped)
@@ -126,11 +153,11 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     /// engine once the rate has read back (or the wait has timed out).
     private func prepareInputDevice(session: Int) {
         guard let inputDevice, HAL.isAlive(inputDevice), HAL.channelCount(inputDevice, scope: kAudioObjectPropertyScopeInput) > 0 else {
-            transition(to: .failed(.inputDeviceUnavailable))
+            fail(.inputDeviceUnavailable)
             return
         }
         guard let output = HAL.defaultOutputDevice() else {
-            transition(to: .failed(.engineFailed("no default output device")))
+            fail(.engineFailed("no default output device"))
             return
         }
         let outputRate = HAL.nominalSampleRate(output)
@@ -165,7 +192,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         case let .success(id):
             aggregate = id
         case let .failure(error):
-            transition(to: .failed(error))
+            fail(error)
             return
         }
         aggregateDevice = aggregate
@@ -176,8 +203,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         // is read: `inputFormat(forBus:)` describes whichever device the unit
         // is bound to at that moment, and the engine builds the graph from it.
         guard let unit = input.audioUnit else {
-            tearDown()
-            transition(to: .failed(.engineFailed("input node has no audio unit")))
+            fail(.engineFailed("input node has no audio unit"))
             return
         }
         var deviceID = aggregate
@@ -186,28 +212,38 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             &deviceID, UInt32(MemoryLayout<AudioObjectID>.size)
         )
         guard status == noErr else {
-            tearDown()
-            transition(to: .failed(.engineFailed("could not bind aggregate device (\(status))")))
+            fail(.engineFailed("could not bind aggregate device (\(status))"))
             return
         }
         let format = input.inputFormat(forBus: 0)
         guard format.channelCount > 0, format.sampleRate > 0 else {
-            tearDown()
-            transition(to: .failed(.inputDeviceUnavailable))
+            fail(.inputDeviceUnavailable)
             return
         }
         engine.connect(input, to: engine.mainMixerNode, format: format)
+        let player = AVAudioPlayerNode()
+        engine.attach(player)
         // The tap block is invoked serially, so the throttle needs no lock.
         var throttle = LevelThrottle(interval: Self.levelInterval, epsilon: Self.levelEpsilon)
-        input.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: nil) { [weak self] buffer, _ in
-            guard let self, let sample = Self.level(of: buffer),
+        let recorder = self.recorder
+        input.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: format) { [weak self] buffer, _ in
+            guard let self else { return }
+            if recorder.append(buffer) {
+                DispatchQueue.main.async {
+                    guard self.generation == session else { return }
+                    self.stopRecording()
+                }
+            }
+            guard let sample = Self.level(of: buffer),
                   let level = throttle.consume(sample, at: ProcessInfo.processInfo.systemUptime) else { return }
             DispatchQueue.main.async {
-                guard self.generation == session, case .running = self.state else { return }
+                guard self.generation == session, case .running = self.state, !self.isPlaying else { return }
                 self.onLevel?(level)
             }
         }
         self.engine = engine
+        self.player = player
+        self.inputFormat = format
 
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
@@ -222,8 +258,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         do {
             try engine.start()
         } catch {
-            tearDown()
-            transition(to: .failed(.engineFailed(error.localizedDescription)))
+            fail(.engineFailed(error.localizedDescription))
             return
         }
         transition(to: .running(outputDeviceName: HAL.readString(output, kAudioObjectPropertyName)))
@@ -249,13 +284,26 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             self.restartScheduled = false
             guard self.generation == session, case .running = self.state else { return }
             self.tearDown()
+            self.settleRecorder(keepClip: true)
             self.generation += 1
             self.transition(to: .starting)
             self.prepareInputDevice(session: self.generation)
         }
     }
 
+    /// Releases everything the session built. Makes no state transitions
+    /// (it also runs from `deinit`); a recording in progress is kept as the
+    /// clip for the caller's `settleRecorder` to report or drop.
     private func tearDown() {
+        endPlayback()
+        progressTimer?.cancel()
+        progressTimer = nil
+        if recorder.isRecording {
+            clip = recorder.stop()
+        }
+        player = nil
+        playerFormat = nil
+        inputFormat = nil
         if let configurationObserver {
             NotificationCenter.default.removeObserver(configurationObserver)
             self.configurationObserver = nil
@@ -276,6 +324,12 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         }
     }
 
+    private func fail(_ error: MicrophoneMonitorError) {
+        tearDown()
+        settleRecorder(keepClip: false)
+        transition(to: .failed(error))
+    }
+
     private func transition(to newState: MicrophoneMonitorState) {
         state = newState
         onStateChanged?(newState)
@@ -290,6 +344,125 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             : Int(buffer.frameLength)
         let samples = UnsafeBufferPointer(start: channels[0], count: count)
         return AudioLevelMeter.normalizedLevel(rms: AudioLevelMeter.rootMeanSquare(samples))
+    }
+
+    // MARK: - Recording and playback (main thread)
+
+    public func startRecording() {
+        guard case .running = state, case .idle = recorderState, let inputFormat else { return }
+        let capacity = AVAudioFrameCount(maxClipDuration * inputFormat.sampleRate)
+        guard recorder.start(format: inputFormat, capacity: capacity) else { return }
+        clip = nil
+        transitionRecorder(to: .recording(elapsed: 0))
+        startProgressTimer(session: generation)
+    }
+
+    public func stopRecording() {
+        guard case .recording = recorderState else { return }
+        progressTimer?.cancel()
+        progressTimer = nil
+        clip = recorder.stop()
+        settleRecorder(keepClip: true)
+    }
+
+    public func startPlayback() {
+        guard case .running = state, case .idle(let duration?) = recorderState,
+              let engine, let player, let clip else { return }
+        let session = generation
+        playbackGeneration += 1
+        let playback = playbackGeneration
+        if playerFormat != clip.format {
+            if playerFormat != nil {
+                engine.disconnectNodeOutput(player)
+            }
+            engine.connect(player, to: engine.mainMixerNode, format: clip.format)
+            playerFormat = clip.format
+        }
+        engine.inputNode.volume = 0
+        var throttle = LevelThrottle(interval: Self.levelInterval, epsilon: Self.levelEpsilon)
+        player.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: nil) { [weak self] buffer, _ in
+            guard let self, let sample = Self.level(of: buffer),
+                  let level = throttle.consume(sample, at: ProcessInfo.processInfo.systemUptime) else { return }
+            DispatchQueue.main.async {
+                guard self.generation == session, self.playbackGeneration == playback else { return }
+                self.onLevel?(level)
+            }
+        }
+        player.scheduleBuffer(clip, at: nil, options: [], completionCallbackType: .dataPlayedBack) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, self.generation == session, self.playbackGeneration == playback else { return }
+                self.endPlayback()
+                self.settleRecorder(keepClip: true)
+            }
+        }
+        player.play()
+        transitionRecorder(to: .playing(elapsed: 0, clipDuration: duration))
+        startProgressTimer(session: session)
+    }
+
+    public func stopPlayback() {
+        guard isPlaying else { return }
+        endPlayback()
+        settleRecorder(keepClip: true)
+    }
+
+    private var isPlaying: Bool {
+        if case .playing = recorderState { return true }
+        return false
+    }
+
+    /// Stops the player and unmutes the live input; no state transition.
+    /// `player.stop()` fires the scheduled completion, which the generation
+    /// bump makes a no-op.
+    private func endPlayback() {
+        guard isPlaying else { return }
+        playbackGeneration += 1
+        progressTimer?.cancel()
+        progressTimer = nil
+        player?.removeTap(onBus: 0)
+        player?.stop()
+        engine?.inputNode.volume = 1
+    }
+
+    /// Seconds of the clip rendered so far, from the player's own clock.
+    private var playbackPosition: TimeInterval {
+        guard let player, let nodeTime = player.lastRenderTime,
+              let playerTime = player.playerTime(forNodeTime: nodeTime), playerTime.sampleRate > 0 else { return 0 }
+        return TimeInterval(playerTime.sampleTime) / playerTime.sampleRate
+    }
+
+    private func startProgressTimer(session: Int) {
+        progressTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + Self.progressInterval, repeating: Self.progressInterval)
+        timer.setEventHandler { [weak self] in
+            guard let self, self.generation == session else { return }
+            switch self.recorderState {
+            case .recording:
+                self.transitionRecorder(to: .recording(elapsed: self.recorder.elapsed))
+            case .playing(_, let duration):
+                self.transitionRecorder(to: .playing(elapsed: min(self.playbackPosition, duration), clipDuration: duration))
+            case .idle:
+                break
+            }
+        }
+        timer.resume()
+        progressTimer = timer
+    }
+
+    /// Reports `.idle` with the clip on hand (or none, when `keepClip` is
+    /// false). Callers tear the session or the activity down first.
+    private func settleRecorder(keepClip: Bool) {
+        if !keepClip {
+            clip = nil
+        }
+        transitionRecorder(to: .idle(clipDuration: clip.map(ClipRecorder.duration(of:))))
+    }
+
+    private func transitionRecorder(to newState: MicrophoneRecorderState) {
+        guard newState != recorderState else { return }
+        recorderState = newState
+        onRecorderStateChanged?(newState)
     }
 }
 

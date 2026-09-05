@@ -129,11 +129,14 @@ func streamUntilInterrupted(mode: LightMode, brightness: Double) -> Never {
 }
 
 /// Passes the mic through the system default output for `seconds`, printing
-/// every monitor state change and a level meter redrawn in place. The
-/// device-list scan in `open()` is synchronous, but a mic that is still
-/// enumerating is only reported by a later HAL notification, so the input
-/// id is polled on the run loop for a few seconds before giving up.
-func runMicrophoneTest(control: CoreAudioDeviceControl, seconds: Int) -> Never {
+/// every monitor state change and a level meter redrawn in place. With
+/// `recordSeconds`, instead records that long once the pass-through is up,
+/// plays the clip back, and exits when playback ends (exit 1 if the clip
+/// came out empty). The device-list scan in `open()` is synchronous, but a
+/// mic that is still enumerating is only reported by a later HAL
+/// notification, so the input id is polled on the run loop for a few
+/// seconds before giving up.
+func runMicrophoneTest(control: CoreAudioDeviceControl, seconds: Int, recordSeconds: Int? = nil) -> Never {
     let deadline = Date().addingTimeInterval(3)
     var inputDevice = control.deviceID(for: .input)
     while inputDevice == nil, Date() < deadline {
@@ -154,46 +157,88 @@ func runMicrophoneTest(control: CoreAudioDeviceControl, seconds: Int) -> Never {
             meterShown = false
         }
     }
+    let meterTimer = DispatchSource.makeTimerSource(queue: .main)
+    let finish: (Int32) -> Never = { code in
+        meterTimer.cancel()
+        monitor.onStateChanged = nil
+        monitor.onRecorderStateChanged = nil
+        monitor.stop()
+        control.close()
+        exit(code)
+    }
+
+    var recordingStarted = false
     monitor.onStateChanged = { state in
         clearMeter()
         print(formatMonitorState(state))
         if case .failed = state {
-            monitor.onStateChanged = nil
-            monitor.stop()
-            control.close()
-            exit(1)
+            finish(1)
         }
+        guard let recordSeconds, case .running = state, !recordingStarted else { return }
+        recordingStarted = true
+        monitor.startRecording()
+        guard case .recording = monitor.recorderState else {
+            print("could not start recording")
+            finish(1)
+        }
+        print("recording for \(recordSeconds) s — say something…")
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(recordSeconds)) {
+            monitor.stopRecording()
+        }
+    }
+    // Only `.idle` matters here: once after the recording (start playback)
+    // and once after playback (exit). Progress shows on the meter line.
+    var playbackStarted = false
+    monitor.onRecorderStateChanged = { recorderState in
+        guard case let .idle(duration) = recorderState else { return }
+        clearMeter()
+        if playbackStarted {
+            print("playback finished")
+            finish(0)
+        }
+        guard let duration else {
+            print("recorded nothing")
+            finish(1)
+        }
+        print(String(format: "recorded %.1f s", duration))
+        monitor.startPlayback()
+        guard case .playing = monitor.recorderState else {
+            print("could not start playback")
+            finish(1)
+        }
+        playbackStarted = true
+        print("playing back…")
     }
     monitor.onLevel = { level = $0 }
 
-    let meterTimer = DispatchSource.makeTimerSource(queue: .main)
     meterTimer.schedule(deadline: .now(), repeating: 0.1)
     meterTimer.setEventHandler {
         guard case .running = monitor.state else { return }
-        print("\r\(formatLevelMeter(level))", terminator: "")
+        // Clear to end of line: the recorder suffix changes width.
+        print("\r\(formatLevelMeter(level))  \(formatRecorderState(monitor.recorderState))\u{1B}[K", terminator: "")
         fflush(stdout)
         meterShown = true
     }
     meterTimer.resume()
 
-    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
-        meterTimer.cancel()
-        monitor.stop()
-        control.close()
-        exit(0)
+    if recordSeconds == nil {
+        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
+            finish(0)
+        }
     }
 
     let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
     signal(SIGINT, SIG_IGN)
     signalSource.setEventHandler {
-        meterTimer.cancel()
-        monitor.stop()
-        control.close()
-        exit(0)
+        finish(0)
     }
     signalSource.resume()
 
-    print("testing microphone (input device \(inputDevice)) for \(seconds) s…")
+    if let recordSeconds {
+        print("testing microphone (input device \(inputDevice)): record \(recordSeconds) s, then play back…")
+    } else {
+        print("testing microphone (input device \(inputDevice)) for \(seconds) s…")
+    }
     monitor.start(inputDevice: inputDevice)
     dispatchMain()
 }
@@ -255,6 +300,8 @@ case "audio":
             try control.setMuted(muted, for: direction)
         case let .test(seconds):
             runMicrophoneTest(control: control, seconds: seconds)
+        case let .testRecording(seconds):
+            runMicrophoneTest(control: control, seconds: seconds, recordSeconds: seconds)
         }
     } catch {
         fail("audio: \(error)")

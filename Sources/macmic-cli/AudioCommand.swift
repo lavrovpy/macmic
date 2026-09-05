@@ -19,6 +19,9 @@ enum AudioCommand: Equatable {
     /// `test [--seconds N]`: pass the mic through the default output for
     /// this many seconds.
     case test(seconds: Int)
+    /// `test --record N`: pass the mic through, record N seconds of it,
+    /// play the clip back, then exit.
+    case testRecording(seconds: Int)
 }
 
 let defaultTestSeconds = 10
@@ -31,13 +34,14 @@ let audioUsage = """
       macmic-cli audio monitor <0-100>
       macmic-cli audio monitor-mute on|off
       macmic-cli audio test [--seconds N]
+      macmic-cli audio test --record N
     """
 
 /// `nil` on any malformed form (unknown verb, missing/extra argument, value
 /// out of range).
 func parseAudioCommand(_ arguments: [String]) -> AudioCommand? {
     if arguments.first == "test" {
-        return parseTestSeconds(Array(arguments.dropFirst())).map { .test(seconds: $0) }
+        return parseTestOptions(Array(arguments.dropFirst()))
     }
     switch arguments.count {
     case 1 where arguments[0] == "status":
@@ -60,16 +64,21 @@ func parseAudioCommand(_ arguments: [String]) -> AudioCommand? {
     }
 }
 
-/// The `--seconds N` option of `audio test`: no arguments →
-/// `defaultTestSeconds`; `N` must be a positive integer; any other token
-/// (or a bare `--seconds`) → `nil`.
-func parseTestSeconds(_ arguments: [String]) -> Int? {
+/// The options of `audio test`: none → `.test(defaultTestSeconds)`;
+/// `--seconds N` → `.test(N)`; `--record N` → `.testRecording(N)`. `N` must
+/// be a positive integer; the two options are exclusive; any other token
+/// (or a bare option) → `nil`.
+func parseTestOptions(_ arguments: [String]) -> AudioCommand? {
     switch arguments.count {
     case 0:
-        return defaultTestSeconds
-    case 2 where arguments[0] == "--seconds":
+        return .test(seconds: defaultTestSeconds)
+    case 2:
         guard let seconds = Int(arguments[1]), seconds > 0 else { return nil }
-        return seconds
+        switch arguments[0] {
+        case "--seconds": return .test(seconds: seconds)
+        case "--record": return .testRecording(seconds: seconds)
+        default: return nil
+        }
     default:
         return nil
     }
@@ -131,6 +140,20 @@ func formatMonitorState(_ state: MicrophoneMonitorState) -> String {
         return "failed: input device unavailable"
     case let .failed(.engineFailed(reason)):
         return "failed: audio engine error: \(reason)"
+    }
+}
+
+/// The recorder's phase for the meter line, e.g. `recording 1.2 s` or
+/// `playing 0.4 / 3.0 s`; empty while idle so the meter line is unchanged
+/// from a plain `audio test`.
+func formatRecorderState(_ state: MicrophoneRecorderState) -> String {
+    switch state {
+    case .idle:
+        return ""
+    case let .recording(elapsed):
+        return String(format: "recording %.1f s", elapsed)
+    case let .playing(elapsed, duration):
+        return String(format: "playing %.1f / %.1f s", elapsed, duration)
     }
 }
 

@@ -12,7 +12,7 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - Persists your last color/mode/brightness across launches
 - Recovers automatically on device hotplug and sleep/wake
 - Microphone gain and mute, headphone-monitoring volume and mute — the same controls as System Settings → Sound, kept in sync with the mic's gain knob and other apps
-- **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Use headphones: speakers in the same room as the mic will feed back.
+- **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Or record up to 30 seconds of yourself and play it back to hear how you sound to others. Use headphones for the live pass-through: speakers in the same room as the mic will feed back (recording and playback don't).
 - Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio, Device) for everything else
 
 Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/completed/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
@@ -44,7 +44,7 @@ Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
 The main window (also opened by launching the app again from Finder or Launchpad) has three sidebar pages:
 
 - **Lighting** — mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
-- **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa. Below them, **Test Microphone** plays the mic through the system's current default output (it follows you if you switch to AirPods mid-test) and shows an input level meter; the first click asks for microphone permission, and if that's denied the page points you at System Settings → Privacy & Security → Microphone.
+- **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa. Below them, **Test Microphone** plays the mic through the system's current default output (it follows you if you switch to AirPods mid-test) and shows an input level meter; while the test runs, **Record** captures up to 30 seconds and **Play** plays the clip back through the same output with the live pass-through muted, the meter following the clip. The clip lives only as long as the test. The first click asks for microphone permission, and if that's denied the page points you at System Settings → Privacy & Security → Microphone.
 - **Device** — lighting and audio connection status and the lighting on/off switch
 
 There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
@@ -61,6 +61,7 @@ swift run macmic-cli audio mute on              # mic mute on|off
 swift run macmic-cli audio monitor 30           # headphone-monitoring volume, 0-100
 swift run macmic-cli audio monitor-mute off     # monitoring mute on|off
 swift run macmic-cli audio test --seconds 10    # play the mic through the default output with a level meter
+swift run macmic-cli audio test --record 3      # same, but record 3 s of the mic, play it back, and exit
 ```
 
 ## How it works
@@ -73,7 +74,7 @@ On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast
 
 Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
 
-Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work) or the mic reappears. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Nothing is recorded.
+Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work) or the mic reappears. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
 
 ### Architecture
 
@@ -91,7 +92,7 @@ MacMic (SwiftUI MenuBarExtra, .accessory)
             ├─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
             │    ├─ CoreAudioDeviceControl (Core Audio HAL)
             │    └─ MockAudioDeviceControl (tests)
-            └─ MicrophoneMonitor (protocol) — Test Microphone pass-through + level meter
+            └─ MicrophoneMonitor (protocol) — Test Microphone pass-through + level meter + record/playback
                  ├─ AVAudioEngineMicrophoneMonitor (AVAudioEngine on a private aggregate device)
                  └─ MockMicrophoneMonitor (tests)
 macmic-cli (probe / solid / cycle / blink / audio, incl. audio test)

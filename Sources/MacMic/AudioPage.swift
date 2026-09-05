@@ -53,6 +53,40 @@ struct AudioPage: View {
                 Text(state.micTestStatusText)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                LabeledContent("Record") {
+                    HStack(spacing: 8) {
+                        Button {
+                            if state.isMicRecording {
+                                state.stopMicRecording()
+                            } else {
+                                state.startMicRecording()
+                            }
+                        } label: {
+                            Label(
+                                state.isMicRecording ? "Stop Recording" : "Record",
+                                systemImage: state.isMicRecording ? "stop.fill" : "record.circle"
+                            )
+                        }
+                        .disabled(!state.micRecordControlsEnabled)
+                        Button {
+                            if state.isMicPlaying {
+                                state.stopMicPlayback()
+                            } else {
+                                state.playMicRecording()
+                            }
+                        } label: {
+                            Label(
+                                state.isMicPlaying ? "Stop" : "Play",
+                                systemImage: state.isMicPlaying ? "stop.fill" : "play.fill"
+                            )
+                        }
+                        .disabled(!state.micPlayControlsEnabled)
+                    }
+                }
+                Text(state.micRecorderStatusText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
                 if state.isMicrophoneAccessDenied {
                     Button("Open System Settings") {
                         NSWorkspace.shared.open(Self.microphonePrivacySettingsURL)
@@ -61,7 +95,7 @@ struct AudioPage: View {
             } header: {
                 Text("Test Microphone")
             } footer: {
-                Text("Plays the microphone through your current output device so you can hear gain changes. Use headphones to avoid feedback.")
+                Text("Plays the microphone through your current output device so you can hear gain changes, or record up to \(Int(state.micMaxClipDuration)) seconds and play it back. Use headphones to avoid feedback while listening live.")
             }
             .disabled(!state.micTestControlsEnabled)
 

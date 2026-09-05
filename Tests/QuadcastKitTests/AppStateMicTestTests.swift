@@ -238,6 +238,135 @@ import Testing
         #expect(state.micTestControlsEnabled == true)
     }
 
+    // MARK: Recording and playback
+
+    @Test func recordingIsIgnoredUnlessRunning() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+
+        state.startMicRecording()
+        #expect(monitor.recordingStartCount == 0)
+        #expect(state.micRecordControlsEnabled == false)
+
+        state.startMicTest()
+        state.startMicRecording()
+        #expect(monitor.recordingStartCount == 0)
+
+        monitor.simulateRunning()
+        #expect(state.micRecordControlsEnabled == true)
+        state.startMicRecording()
+        #expect(monitor.recordingStartCount == 1)
+        #expect(state.micRecorderState == .recording(elapsed: 0))
+        #expect(state.isMicRecording == true)
+    }
+
+    @Test func recordThenPlayRoundTrip() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+        state.startMicTest()
+        monitor.simulateRunning()
+        #expect(state.hasMicRecording == false)
+        #expect(state.micPlayControlsEnabled == false)
+
+        state.startMicRecording()
+        monitor.simulateRecordingProgress(2.5)
+        #expect(state.micRecorderState == .recording(elapsed: 2.5))
+        #expect(state.micPlayControlsEnabled == false)
+
+        state.stopMicRecording()
+        #expect(state.micRecorderState == .idle(clipDuration: 2.5))
+        #expect(state.hasMicRecording == true)
+        #expect(state.micPlayControlsEnabled == true)
+        #expect(state.micRecordControlsEnabled == true)
+
+        state.playMicRecording()
+        #expect(monitor.playbackStartCount == 1)
+        #expect(state.micRecorderState == .playing(elapsed: 0, clipDuration: 2.5))
+        #expect(state.isMicPlaying == true)
+        #expect(state.micRecordControlsEnabled == false)
+        #expect(state.micPlayControlsEnabled == true)
+
+        monitor.simulatePlaybackProgress(1)
+        #expect(state.micRecorderState == .playing(elapsed: 1, clipDuration: 2.5))
+
+        monitor.simulatePlaybackFinished()
+        #expect(state.micRecorderState == .idle(clipDuration: 2.5))
+        #expect(state.isMicPlaying == false)
+        #expect(state.hasMicRecording == true)
+    }
+
+    @Test func stopPlaybackKeepsTheClip() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+        state.startMicTest()
+        monitor.simulateRunning()
+        state.startMicRecording()
+        monitor.simulateRecordingProgress(1)
+        state.stopMicRecording()
+        state.playMicRecording()
+
+        state.stopMicPlayback()
+
+        #expect(state.micRecorderState == .idle(clipDuration: 1))
+        #expect(state.micPlayControlsEnabled == true)
+    }
+
+    @Test func playbackIsIgnoredWithoutAClipOrWhileNotRunning() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+        state.startMicTest()
+        monitor.simulateRunning()
+
+        state.playMicRecording()
+        #expect(monitor.playbackStartCount == 0)
+
+        state.startMicRecording()
+        monitor.simulateRecordingProgress(1)
+        state.stopMicRecording()
+        monitor.simulateFailure(.engineFailed("boom"))
+        state.playMicRecording()
+        #expect(monitor.playbackStartCount == 0)
+        #expect(state.micPlayControlsEnabled == false)
+    }
+
+    @Test func stoppingTheTestDropsTheClip() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+        state.startMicTest()
+        monitor.simulateRunning()
+        state.startMicRecording()
+        monitor.simulateRecordingProgress(3)
+        state.stopMicRecording()
+        #expect(state.hasMicRecording == true)
+
+        state.stopMicTest()
+
+        #expect(state.micRecorderState == .idle(clipDuration: nil))
+        #expect(state.hasMicRecording == false)
+        #expect(state.micRecordControlsEnabled == false)
+        #expect(state.micPlayControlsEnabled == false)
+    }
+
+    @Test func recorderStatusTextPerPhase() throws {
+        let monitor = MockMicrophoneMonitor()
+        let state = makeState(monitor: monitor)
+        #expect(state.micRecorderStatusText == "Nothing recorded")
+
+        state.startMicTest()
+        monitor.simulateRunning()
+        state.startMicRecording()
+        #expect(state.micRecorderStatusText == "Recording… 0.0 s")
+        monitor.simulateRecordingProgress(1.26)
+        #expect(state.micRecorderStatusText == "Recording… 1.3 s")
+
+        state.stopMicRecording()
+        #expect(state.micRecorderStatusText == "Recorded 1.3 s")
+
+        state.playMicRecording()
+        monitor.simulatePlaybackProgress(0.5)
+        #expect(state.micRecorderStatusText == "Playing 0.5 s of 1.3 s")
+    }
+
     // MARK: UI derivations
 
     @Test func statusTextPerState() throws {

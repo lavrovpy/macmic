@@ -33,6 +33,27 @@ public enum MicrophoneMonitorState: Equatable, Sendable {
     case failed(MicrophoneMonitorError)
 }
 
+/// The record-and-replay half of "Test Microphone", tracked separately from
+/// `MicrophoneMonitorState`: a clip can only be recorded or played while the
+/// monitor is `.running`, survives the monitor's own restarts (default
+/// output change, device-list change), and is dropped by `stop`.
+public enum MicrophoneRecorderState: Equatable, Sendable {
+    /// Nothing in progress; `clipDuration` (seconds) is the last recording's
+    /// length, `nil` when there is none to play.
+    case idle(clipDuration: TimeInterval?)
+    case recording(elapsed: TimeInterval)
+    case playing(elapsed: TimeInterval, clipDuration: TimeInterval)
+
+    /// The clip that would play, if any — in every phase, not only `.idle`.
+    public var clipDuration: TimeInterval? {
+        switch self {
+        case .idle(let duration): return duration
+        case .recording: return nil
+        case .playing(_, let duration): return duration
+        }
+    }
+}
+
 /// Live pass-through of a Core Audio input device to the system's current
 /// default output, plus an input level meter — so the user can hear the
 /// QuadCast S through AirPods/a headset while adjusting its gain, instead
@@ -49,13 +70,35 @@ public protocol MicrophoneMonitor: AnyObject {
     var onLevel: ((Float) -> Void)? { get set }
     var state: MicrophoneMonitorState { get }
 
+    /// Invoked on the main thread on every recorder transition, including
+    /// progress ticks (`elapsed` advancing) a few times a second.
+    var onRecorderStateChanged: ((MicrophoneRecorderState) -> Void)? { get set }
+    var recorderState: MicrophoneRecorderState { get }
+    /// Recording stops on its own once the clip reaches this length.
+    var maxClipDuration: TimeInterval { get }
+
     /// Begins pass-through from `inputDevice`. The outcome arrives via
     /// `onStateChanged` (`.running` or `.failed`); `.starting` is delivered
     /// before this returns. Calling it while already starting/running stops
     /// the current session and restarts on the new device.
     func start(inputDevice: AudioObjectID)
     /// Synchronous; ends in `.stopped`. Safe to call when already stopped.
+    /// Discards any recorded clip.
     func stop()
+
+    /// Starts capturing the input into a new clip, replacing the previous
+    /// one. Ignored unless `.running` with the recorder idle. The input
+    /// level meter keeps reporting the live input meanwhile.
+    func startRecording()
+    /// Ends the recording; the clip is then playable. Ignored unless recording.
+    func stopRecording()
+    /// Plays the clip through the same output as the pass-through, with the
+    /// live input muted for the duration so only the clip is heard; the level
+    /// meter reports the clip while it plays. Ignored unless `.running` with
+    /// the recorder idle and a clip recorded. Ends in `.idle` on its own.
+    func startPlayback()
+    /// Ignored unless playing.
+    func stopPlayback()
 }
 
 /// Pure level-meter math, kept separate from the engine so it can be unit

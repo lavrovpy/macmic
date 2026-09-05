@@ -123,12 +123,27 @@ import Testing
         #expect(parseAudioCommand(["test", "--minutes", "5"]) == nil)
     }
 
-    @Test func parseTestSecondsBounds() {
-        #expect(parseTestSeconds([]) == 10)
-        #expect(parseTestSeconds(["--seconds", "1"]) == 1)
-        #expect(parseTestSeconds(["--seconds", "600"]) == 600)
-        #expect(parseTestSeconds(["--seconds", "0"]) == nil)
-        #expect(parseTestSeconds(["--seconds", ""]) == nil)
+    @Test func parseTestOptionsBounds() {
+        #expect(parseTestOptions([]) == .test(seconds: 10))
+        #expect(parseTestOptions(["--seconds", "1"]) == .test(seconds: 1))
+        #expect(parseTestOptions(["--seconds", "600"]) == .test(seconds: 600))
+        #expect(parseTestOptions(["--seconds", "0"]) == nil)
+        #expect(parseTestOptions(["--seconds", ""]) == nil)
+    }
+
+    @Test func parseAudioCommandTestReadsRecordOption() {
+        #expect(parseAudioCommand(["test", "--record", "3"]) == .testRecording(seconds: 3))
+        #expect(parseAudioCommand(["test", "--record"]) == nil)
+        #expect(parseAudioCommand(["test", "--record", "0"]) == nil)
+        #expect(parseAudioCommand(["test", "--record", "x"]) == nil)
+        #expect(parseAudioCommand(["test", "--record", "3", "--seconds", "5"]) == nil)
+    }
+
+    @Test func formatRecorderStateDescribesEveryPhase() {
+        #expect(formatRecorderState(.idle(clipDuration: nil)) == "")
+        #expect(formatRecorderState(.idle(clipDuration: 2)) == "")
+        #expect(formatRecorderState(.recording(elapsed: 1.25)) == "recording 1.2 s")
+        #expect(formatRecorderState(.playing(elapsed: 0.5, clipDuration: 3)) == "playing 0.5 / 3.0 s")
     }
 
     @Test func formatMonitorStateDescribesEveryState() {

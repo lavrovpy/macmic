@@ -241,4 +241,51 @@ extension AppState {
             return "Failed: \(detail)"
         }
     }
+
+    // MARK: Microphone recording
+
+    public var isMicRecording: Bool {
+        if case .recording = micRecorderState { return true }
+        return false
+    }
+
+    public var isMicPlaying: Bool {
+        if case .playing = micRecorderState { return true }
+        return false
+    }
+
+    public var hasMicRecording: Bool {
+        micRecorderState.clipDuration != nil
+    }
+
+    /// The Record / Stop Recording button: needs the pass-through up and
+    /// the player idle.
+    public var micRecordControlsEnabled: Bool {
+        if case .running = micTestState { return !isMicPlaying }
+        return false
+    }
+
+    /// The Play / Stop button: needs the pass-through up, a clip, and the
+    /// recorder idle.
+    public var micPlayControlsEnabled: Bool {
+        if case .running = micTestState { return hasMicRecording && !isMicRecording }
+        return false
+    }
+
+    public var micRecorderStatusText: String {
+        switch micRecorderState {
+        case .idle(nil):
+            return "Nothing recorded"
+        case .idle(let duration?):
+            return "Recorded \(Self.formatSeconds(duration))"
+        case .recording(let elapsed):
+            return "Recording… \(Self.formatSeconds(elapsed))"
+        case .playing(let elapsed, let duration):
+            return "Playing \(Self.formatSeconds(elapsed)) of \(Self.formatSeconds(duration))"
+        }
+    }
+
+    static func formatSeconds(_ seconds: TimeInterval) -> String {
+        String(format: "%.1f s", seconds)
+    }
 }
