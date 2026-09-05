@@ -111,8 +111,6 @@ public enum AudioDeviceControlError: Error, Equatable {
     case deviceNotFound(AudioDirection)
     /// Registering the Core Audio device-list listener failed with this status.
     case openFailed(OSStatus)
-    /// A property read failed with this status.
-    case readFailed(OSStatus)
     /// A property write failed with this status.
     case setFailed(OSStatus)
 }

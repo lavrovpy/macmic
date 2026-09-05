@@ -65,6 +65,46 @@ import Testing
     }
 }
 
+@Suite struct LevelThrottleTests {
+    @Test func deliversTheFirstLevelImmediately() {
+        var throttle = LevelThrottle(interval: 0.04, epsilon: 0.005)
+        #expect(throttle.consume(0.3, at: 10) == 0.3)
+    }
+
+    @Test func holdsBackWithinTheIntervalAndCarriesThePeak() {
+        var throttle = LevelThrottle(interval: 0.04, epsilon: 0.005)
+        #expect(throttle.consume(0.3, at: 10) == 0.3)
+        #expect(throttle.consume(0.9, at: 10.02) == nil)
+        #expect(throttle.consume(0.5, at: 10.03) == nil)
+        // The burst to 0.9 between deliveries is what gets delivered, not
+        // the 0.5 the interval happened to expire on.
+        #expect(throttle.consume(0.5, at: 10.05) == 0.9)
+    }
+
+    @Test func skipsAValueWithinEpsilonOfTheLastDelivered() {
+        var throttle = LevelThrottle(interval: 0.04, epsilon: 0.005)
+        #expect(throttle.consume(0.3, at: 10) == 0.3)
+        #expect(throttle.consume(0.303, at: 10.05) == nil)
+        #expect(throttle.consume(0.297, at: 10.10) == nil)
+        #expect(throttle.consume(0.31, at: 10.15) == 0.31)
+    }
+
+    @Test func skippedValueDoesNotExtendTheHold() {
+        var throttle = LevelThrottle(interval: 0.04, epsilon: 0.005)
+        #expect(throttle.consume(0.3, at: 10) == 0.3)
+        #expect(throttle.consume(0.301, at: 10.05) == nil)
+        // Nothing was delivered at 10.05, so the next buffer is eligible.
+        #expect(throttle.consume(0.6, at: 10.06) == 0.6)
+    }
+
+    @Test func silenceIsDeliveredOnceThenSuppressed() {
+        var throttle = LevelThrottle(interval: 0.04, epsilon: 0.005)
+        #expect(throttle.consume(0, at: 10) == 0)
+        #expect(throttle.consume(0, at: 10.1) == nil)
+        #expect(throttle.consume(0, at: 10.2) == nil)
+    }
+}
+
 @Suite struct MicrophoneMonitorStateTests {
     @Test func runningStatesCompareByOutputDeviceName() {
         #expect(MicrophoneMonitorState.running(outputDeviceName: "AirPods Pro")

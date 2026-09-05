@@ -12,8 +12,8 @@ import SwiftUI
 
 /// The status item's pull-down menu: connection status, the enable toggle,
 /// a mode submenu, the mic mute toggle, and the entry point to the main
-/// window. Deliberately a
-/// plain menu rather than a popover so the app has exactly one window.
+/// window. Deliberately a plain menu rather than a popover so the app has
+/// exactly one window.
 struct MenuBarMenu: View {
     @ObservedObject var state: AppState
     @Environment(\.openWindow) private var openWindow

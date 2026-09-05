@@ -44,7 +44,8 @@ public protocol MicrophoneMonitor: AnyObject {
     /// synchronous `.starting` from `start` and `.stopped` from `stop`.
     var onStateChanged: ((MicrophoneMonitorState) -> Void)? { get set }
     /// Normalized input level (`0...1`, see `AudioLevelMeter`), on the main
-    /// thread, only while `.running`.
+    /// thread, only while `.running`, at a rate an on-screen meter can draw
+    /// (the adapter decimates its per-buffer readings) rather than per buffer.
     var onLevel: ((Float) -> Void)? { get set }
     var state: MicrophoneMonitorState { get }
 

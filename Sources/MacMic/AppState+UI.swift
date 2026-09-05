@@ -10,8 +10,8 @@ import QuadcastKit
 import SwiftUI
 
 /// The user-facing choice of lighting mode, without the per-mode payload
-/// (`LightMode`'s associated values). Drives the mode `Picker` in the
-/// settings window and the preset buttons in the menu bar popover.
+/// (`LightMode`'s associated values). Drives the mode `Picker` in the main
+/// window's Lighting page and in the status menu.
 public enum LightModeKind: String, CaseIterable, Identifiable, Sendable {
     case solid, cycle, blink
 
@@ -27,8 +27,8 @@ public enum LightModeKind: String, CaseIterable, Identifiable, Sendable {
 }
 
 /// UI-facing derivations from `AppState`'s core (persistence/hotplug) model,
-/// kept separate so the menu bar view model stays a thin, testable layer on
-/// top of Task 7's `AppState`.
+/// shared by the status menu and the main window's pages, kept separate so
+/// they stay a thin, testable layer on top of Task 7's `AppState`.
 extension AppState {
     /// The speed a preset (Rainbow Cycle, Blink) starts at before the user
     /// has ever adjusted it.
@@ -127,14 +127,16 @@ extension AppState {
         set { solidRGB = rgbColor(from: newValue) }
     }
 
-    /// Whether interactive controls (color picker, preset buttons,
-    /// brightness slider) should be enabled. Mirrors `isConnected`; a named,
-    /// testable derivation rather than inlining `!isConnected` in the view.
+    /// Whether the lighting controls (mode picker, color editor, speed and
+    /// brightness sliders, enable toggle) should be enabled. Mirrors
+    /// `isConnected`; a named, testable derivation rather than inlining
+    /// `!isConnected` in the views.
     public var controlsEnabled: Bool {
         isConnected
     }
 
-    /// Human-readable connection status line shown in the popover.
+    /// Human-readable lighting connection status line, shown in the status
+    /// menu and on the Device page.
     public var connectionStatusText: String {
         isConnected ? "QuadCast S connected" : "QuadCast S not found"
     }

@@ -10,10 +10,10 @@ import AppKit
 import QuadcastKit
 import SwiftUI
 
-/// Converts a SwiftUI `ColorPicker` selection to the `RGBColor` sent to the
-/// device, via `NSColor`'s sRGB component space (SwiftUI `Color` has no
-/// direct RGB accessor). Pure and hardware-independent so it's testable
-/// without a menu bar.
+/// Converts a SwiftUI `Color` to the `RGBColor` sent to the device, via
+/// `NSColor`'s sRGB component space (SwiftUI `Color` has no direct RGB
+/// accessor). Pure and hardware-independent so it's testable without a
+/// menu bar.
 func rgbColor(from color: Color) -> QuadcastKit.RGBColor {
     // `.white` is always component-convertible, unlike the raw `NSColor`,
     // which can be a pattern/catalog color that traps on `.redComponent`
@@ -25,8 +25,8 @@ func rgbColor(from color: Color) -> QuadcastKit.RGBColor {
     return QuadcastKit.RGBColor(r: channel(nsColor.redComponent), g: channel(nsColor.greenComponent), b: channel(nsColor.blueComponent))
 }
 
-/// The inverse of `rgbColor(from:)`, used to show the device's current solid
-/// color back in the `ColorPicker`.
+/// The inverse of `rgbColor(from:)`, used to paint a device color as a
+/// SwiftUI swatch.
 func color(from rgbColor: QuadcastKit.RGBColor) -> Color {
     Color(.sRGB, red: Double(rgbColor.r) / 255, green: Double(rgbColor.g) / 255, blue: Double(rgbColor.b) / 255, opacity: 1)
 }

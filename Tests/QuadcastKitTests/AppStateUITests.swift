@@ -15,7 +15,7 @@ import Testing
 
 /// Tests for the UI-facing derivations layered on top of Task 7's `AppState`
 /// (`solidColor`, `modeKind`, `presetSpeed`, `blinkColors`, `controlsEnabled`,
-/// `connectionStatusText`), shared by the menu bar popover and the settings
+/// `connectionStatusText`), shared by the status menu and the main
 /// window. Kept separate from `AppStateTests` (which covers the core
 /// persistence/hotplug model those derivations read from).
 @Suite struct AppStateUITests {
@@ -125,8 +125,8 @@ import Testing
         #expect(state.mode == .blink(colors: blinkColors, speed: 77))
     }
 
-    /// Before the user has ever used Blink, it starts from the solid color
-    /// (the popover's original behavior), not from a fixed white.
+    /// Before the user has ever used Blink, it starts from the solid color,
+    /// not from a fixed white.
     @Test func firstBlinkSeedsFromSolidColorAtDefaultSpeed() throws {
         let state = makeState()
         let solid = RGBColor(r: 0xAA, g: 0x00, b: 0x55)

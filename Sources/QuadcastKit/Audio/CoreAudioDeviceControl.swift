@@ -85,13 +85,13 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
             let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
                 self?.handleDeviceListChanged()
             }
-            var address = Self.deviceListAddress
-            let status = AudioObjectAddPropertyListenerBlock(Self.systemObjectID, &address, queue, block)
+            var address = HAL.address(kAudioHardwarePropertyDevices)
+            let status = AudioObjectAddPropertyListenerBlock(HAL.systemObject, &address, queue, block)
             guard status == noErr else {
                 throw AudioDeviceControlError.openFailed(status)
             }
             registrations.append(ListenerRegistration(
-                objectID: Self.systemObjectID, direction: nil, address: address, block: block
+                objectID: HAL.systemObject, direction: nil, address: address, block: block
             ))
             isOpen = true
             rescanDevices()
@@ -225,44 +225,16 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     // MARK: - Property addresses
 
-    static let systemObjectID = AudioObjectID(kAudioObjectSystemObject)
-
-    private static let deviceListAddress = AudioObjectPropertyAddress(
-        mSelector: kAudioHardwarePropertyDevices,
-        mScope: kAudioObjectPropertyScopeGlobal,
-        mElement: kAudioObjectPropertyElementMain
-    )
-
     private static func muteAddress(for direction: AudioDirection) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyMute,
-            mScope: scope(for: direction),
-            mElement: kAudioObjectPropertyElementMain
-        )
+        HAL.address(kAudioDevicePropertyMute, scope: scope(for: direction))
     }
 
     private static func volumeScalarAddress(for direction: AudioDirection, element: UInt32) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeScalar,
-            mScope: scope(for: direction),
-            mElement: element
-        )
+        HAL.address(kAudioDevicePropertyVolumeScalar, scope: scope(for: direction), element: element)
     }
 
     private static func volumeDecibelsAddress(for direction: AudioDirection) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyVolumeDecibels,
-            mScope: scope(for: direction),
-            mElement: 1
-        )
-    }
-
-    static func globalAddress(_ selector: AudioObjectPropertySelector) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(
-            mSelector: selector,
-            mScope: kAudioObjectPropertyScopeGlobal,
-            mElement: kAudioObjectPropertyElementMain
-        )
+        HAL.address(kAudioDevicePropertyVolumeDecibels, scope: scope(for: direction), element: 1)
     }
 
     // MARK: - Listener handling (all on `queue`)
@@ -281,13 +253,13 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// Re-enumerates the HAL's device list and brings the per-device
     /// listeners in line with `assignDirections`' result via `listenerDiff`.
     private func rescanDevices() {
-        let enumerated = Self.allDeviceIDs().map { id in
+        let enumerated = HAL.allDeviceIDs().map { id in
             EnumeratedDevice(
                 id: id,
-                modelUID: Self.readString(id, Self.globalAddress(kAudioDevicePropertyModelUID)),
-                name: Self.readString(id, Self.globalAddress(kAudioObjectPropertyName)),
-                inputChannels: Self.channelCount(of: id, scope: kAudioObjectPropertyScopeInput),
-                outputChannels: Self.channelCount(of: id, scope: kAudioObjectPropertyScopeOutput)
+                modelUID: HAL.readString(id, kAudioDevicePropertyModelUID),
+                name: HAL.readString(id, kAudioObjectPropertyName),
+                inputChannels: HAL.channelCount(id, scope: kAudioObjectPropertyScopeInput),
+                outputChannels: HAL.channelCount(id, scope: kAudioObjectPropertyScopeOutput)
             )
         }
         let assigned = Self.assignDirections(enumerated)
@@ -324,11 +296,11 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// rather than an error.
     private func readLevel(_ direction: AudioDirection) -> AudioLevel? {
         guard let device = tracked[direction],
-              let mute = Self.readUInt32(device.id, Self.muteAddress(for: direction)),
-              let volume = Self.readFloat32(device.id, Self.volumeScalarAddress(for: direction, element: 1)) else {
+              let mute = HAL.readUInt32(device.id, Self.muteAddress(for: direction)),
+              let volume = HAL.readFloat32(device.id, Self.volumeScalarAddress(for: direction, element: 1)) else {
             return nil
         }
-        let decibels = Self.readFloat32(device.id, Self.volumeDecibelsAddress(for: direction))
+        let decibels = HAL.readFloat32(device.id, Self.volumeDecibelsAddress(for: direction))
         return AudioLevel(volume: volume, isMuted: mute != 0, decibels: decibels)
     }
 
@@ -359,69 +331,5 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     private func deliver(_ snapshot: AudioDeviceSnapshot) {
         DispatchQueue.main.async { self.onStateChanged?(snapshot) }
-    }
-
-    // MARK: - HAL read helpers
-
-    private static func allDeviceIDs() -> [AudioObjectID] {
-        var address = deviceListAddress
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(systemObjectID, &address, 0, nil, &size) == noErr, size > 0 else {
-            return []
-        }
-        var ids = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(systemObjectID, &address, 0, nil, &size, &ids) == noErr else {
-            return []
-        }
-        return ids
-    }
-
-    private static func channelCount(of objectID: AudioObjectID, scope: AudioObjectPropertyScope) -> Int {
-        var address = AudioObjectPropertyAddress(
-            mSelector: kAudioDevicePropertyStreamConfiguration,
-            mScope: scope,
-            mElement: kAudioObjectPropertyElementMain
-        )
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(objectID, &address, 0, nil, &size) == noErr, size > 0 else {
-            return 0
-        }
-        let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
-        defer { raw.deallocate() }
-        let list = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
-        guard AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, list) == noErr else {
-            return 0
-        }
-        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
-    }
-
-    static func readString(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress) -> String? {
-        var address = address
-        var value: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &value) == noErr else {
-            return nil
-        }
-        return value?.takeRetainedValue() as String?
-    }
-
-    private static func readUInt32(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress) -> UInt32? {
-        var address = address
-        var value: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        guard AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &value) == noErr else {
-            return nil
-        }
-        return value
-    }
-
-    private static func readFloat32(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress) -> Float32? {
-        var address = address
-        var value: Float32 = 0
-        var size = UInt32(MemoryLayout<Float32>.size)
-        guard AudioObjectGetPropertyData(objectID, &address, 0, nil, &size, &value) == noErr else {
-            return nil
-        }
-        return value
     }
 }

@@ -41,15 +41,22 @@ import Foundation
 ///
 /// Not thread-safe: `start`/`stop` are main-thread calls and all state lives
 /// on the main thread. The only off-main code is the input tap, which hops
-/// to main once per buffer. `generation` invalidates anything still in
-/// flight — a permission prompt, a rate-pinning wait, a tap buffer, a
-/// restart — from a session that has since been stopped or restarted.
+/// to main at most every `levelInterval` (see `LevelThrottle`). `generation`
+/// invalidates anything still in flight — a permission prompt, a
+/// rate-pinning wait, a tap buffer, a restart — from a session that has
+/// since been stopped or restarted.
 public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     public var onStateChanged: ((MicrophoneMonitorState) -> Void)?
     public var onLevel: ((Float) -> Void)?
     public private(set) var state: MicrophoneMonitorState = .stopped
 
     static let tapBufferSize: AVAudioFrameCount = 1024
+    /// The tap fires per buffer (~47 Hz at 48 kHz); `onLevel` is decimated
+    /// to this so a meter animating at ~80 ms isn't fed faster than it can
+    /// draw, and not at all while the level is within `levelEpsilon` (0.5%
+    /// of the bar) of what was last delivered.
+    static let levelInterval: TimeInterval = 1.0 / 25
+    static let levelEpsilon: Float = 0.005
     static let aggregateDeviceName = "MacMic Microphone Test"
     /// Polling interval and cap for the mic's nominal rate to read back
     /// after pinning; the HAL applies the change asynchronously.
@@ -154,7 +161,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     private func startEngine(session: Int, output: AudioObjectID) {
         guard let inputDevice else { return }
         let aggregate: AudioObjectID
-        switch HAL.createAggregateDevice(input: inputDevice, output: output) {
+        switch Self.createAggregateDevice(input: inputDevice, output: output) {
         case let .success(id):
             aggregate = id
         case let .failure(error):
@@ -190,8 +197,11 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             return
         }
         engine.connect(input, to: engine.mainMixerNode, format: format)
+        // The tap block is invoked serially, so the throttle needs no lock.
+        var throttle = LevelThrottle(interval: Self.levelInterval, epsilon: Self.levelEpsilon)
         input.installTap(onBus: 0, bufferSize: Self.tapBufferSize, format: nil) { [weak self] buffer, _ in
-            guard let self, let level = Self.level(of: buffer) else { return }
+            guard let self, let sample = Self.level(of: buffer),
+                  let level = throttle.consume(sample, at: ProcessInfo.processInfo.systemUptime) else { return }
             DispatchQueue.main.async {
                 guard self.generation == session, case .running = self.state else { return }
                 self.onLevel?(level)
@@ -283,84 +293,20 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     }
 }
 
-// MARK: - HAL helpers
+// MARK: - Aggregate device
 
-private enum HAL {
-    static let systemObject = AudioObjectID(kAudioObjectSystemObject)
-
-    static func address(
-        _ selector: AudioObjectPropertySelector, scope: AudioObjectPropertyScope = kAudioObjectPropertyScopeGlobal
-    ) -> AudioObjectPropertyAddress {
-        AudioObjectPropertyAddress(mSelector: selector, mScope: scope, mElement: kAudioObjectPropertyElementMain)
-    }
-
-    static func defaultOutputDevice() -> AudioObjectID? {
-        var address = address(kAudioHardwarePropertyDefaultOutputDevice)
-        var deviceID = AudioObjectID(kAudioObjectUnknown)
-        var size = UInt32(MemoryLayout<AudioObjectID>.size)
-        guard AudioObjectGetPropertyData(systemObject, &address, 0, nil, &size, &deviceID) == noErr,
-              deviceID != kAudioObjectUnknown else {
-            return nil
-        }
-        return deviceID
-    }
-
-    static func isAlive(_ device: AudioObjectID) -> Bool {
-        var address = address(kAudioDevicePropertyDeviceIsAlive)
-        var alive: UInt32 = 0
-        var size = UInt32(MemoryLayout<UInt32>.size)
-        return AudioObjectGetPropertyData(device, &address, 0, nil, &size, &alive) == noErr && alive != 0
-    }
-
-    static func channelCount(_ device: AudioObjectID, scope: AudioObjectPropertyScope) -> Int {
-        var address = address(kAudioDevicePropertyStreamConfiguration, scope: scope)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return 0 }
-        let raw = UnsafeMutableRawPointer.allocate(byteCount: Int(size), alignment: MemoryLayout<AudioBufferList>.alignment)
-        defer { raw.deallocate() }
-        let list = raw.bindMemory(to: AudioBufferList.self, capacity: 1)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, list) == noErr else { return 0 }
-        return UnsafeMutableAudioBufferListPointer(list).reduce(0) { $0 + Int($1.mNumberChannels) }
-    }
-
-    static func nominalSampleRate(_ device: AudioObjectID) -> Double {
-        var address = address(kAudioDevicePropertyNominalSampleRate)
-        var rate = 0.0
-        var size = UInt32(MemoryLayout<Double>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &rate) == noErr else { return 0 }
-        return rate
-    }
-
-    static func setNominalSampleRate(_ device: AudioObjectID, _ rate: Double) -> Bool {
-        var address = address(kAudioDevicePropertyNominalSampleRate)
-        var rate = rate
-        return AudioObjectSetPropertyData(device, &address, 0, nil, UInt32(MemoryLayout<Double>.size), &rate) == noErr
-    }
-
-    static func availableSampleRates(_ device: AudioObjectID) -> [Double] {
-        var address = address(kAudioDevicePropertyAvailableNominalSampleRates)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(device, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
-        var ranges = [AudioValueRange](repeating: AudioValueRange(), count: Int(size) / MemoryLayout<AudioValueRange>.size)
-        guard AudioObjectGetPropertyData(device, &address, 0, nil, &size, &ranges) == noErr else { return [] }
-        return ranges.map(\.mMinimum)
-    }
-
-    static func readString(_ device: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
-        CoreAudioDeviceControl.readString(device, CoreAudioDeviceControl.globalAddress(selector))
-    }
-
+private extension AVAudioEngineMicrophoneMonitor {
     /// A private (invisible to other processes) aggregate of `input` and
     /// `output`, clocked by `output` with drift compensation on `input`.
     static func createAggregateDevice(input: AudioObjectID, output: AudioObjectID) -> Result<AudioObjectID, MicrophoneMonitorError> {
-        guard let inputUID = readString(input, kAudioDevicePropertyDeviceUID) else {
+        guard let inputUID = HAL.readString(input, kAudioDevicePropertyDeviceUID) else {
             return .failure(.inputDeviceUnavailable)
         }
-        guard let outputUID = readString(output, kAudioDevicePropertyDeviceUID) else {
+        guard let outputUID = HAL.readString(output, kAudioDevicePropertyDeviceUID) else {
             return .failure(.engineFailed("default output device has no UID"))
         }
         let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: AVAudioEngineMicrophoneMonitor.aggregateDeviceName,
+            kAudioAggregateDeviceNameKey: aggregateDeviceName,
             kAudioAggregateDeviceUIDKey: "dev.alavreniuk.macmic.mictest.\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey: 1,
             kAudioAggregateDeviceIsStackedKey: 0,
@@ -376,5 +322,37 @@ private enum HAL {
             return .failure(.engineFailed("could not create aggregate device (\(status))"))
         }
         return .success(aggregate)
+    }
+}
+
+// MARK: - Level throttle
+
+/// Decimates per-buffer levels to a delivery rate: at most one value per
+/// `interval`, carrying the peak of the buffers since the last delivery
+/// (so a short burst between deliveries still shows), and nothing while
+/// that peak is within `epsilon` of the last delivered value. Pure, so the
+/// rate policy is unit-testable without an engine.
+struct LevelThrottle {
+    let interval: TimeInterval
+    let epsilon: Float
+    private var peak: Float = 0
+    private var lastDelivered: Float?
+    private var lastDeliveryTime: TimeInterval = -.infinity
+
+    init(interval: TimeInterval, epsilon: Float) {
+        self.interval = interval
+        self.epsilon = epsilon
+    }
+
+    /// Feeds one buffer's level; returns the value to deliver, or `nil`.
+    mutating func consume(_ level: Float, at time: TimeInterval) -> Float? {
+        peak = max(peak, level)
+        guard time - lastDeliveryTime >= interval else { return nil }
+        let value = peak
+        peak = 0
+        if let lastDelivered, abs(value - lastDelivered) < epsilon { return nil }
+        lastDelivered = value
+        lastDeliveryTime = time
+        return value
     }
 }

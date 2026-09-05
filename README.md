@@ -6,7 +6,7 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 
 ## Features (v1)
 
-- Solid color via a native `ColorPicker`
+- Solid color, edited inline with swatches, RGB sliders, or a hex field
 - Animated presets: **Rainbow Cycle** and **Blink**
 - Brightness control
 - Persists your last color/mode/brightness across launches
@@ -15,7 +15,7 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Use headphones: speakers in the same room as the mic will feed back.
 - Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio, Device) for everything else
 
-Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
+Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/completed/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
 
 ## Install
 
@@ -69,7 +69,7 @@ The QuadCast S does **not** persist software-set colors — it only remembers a 
 
 Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the timer's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
 
-On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/20260720-macmic-rgb-control.md) for the full investigation.
+On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/completed/20260720-macmic-rgb-control.md) for the full investigation.
 
 Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
 
