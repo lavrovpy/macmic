@@ -57,6 +57,8 @@ struct LightingPage: View {
                 } maximumValueLabel: {
                     Image(systemName: "sun.max")
                 }
+                .accessibilityLabel("Brightness")
+                .accessibilityValue("\(Int((state.brightness * 100).rounded())) percent")
             }
         }
         .formStyle(.grouped)
@@ -71,6 +73,8 @@ struct LightingPage: View {
         } maximumValueLabel: {
             Image(systemName: "hare")
         }
+        .accessibilityLabel("Speed")
+        .accessibilityValue("\(state.presetSpeed) of \(AppState.presetSpeedRange.upperBound)")
     }
 
     private var presetSpeedBounds: ClosedRange<Double> {
@@ -98,6 +102,7 @@ struct LightingPage: View {
                     selectedBlinkIndex = index
                 }
                 .accessibilityLabel("Blink color \(index + 1)")
+                .accessibilityValue(rgb.hexString)
             }
             Spacer()
             Button {

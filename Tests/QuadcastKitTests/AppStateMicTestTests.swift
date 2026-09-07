@@ -392,6 +392,10 @@ import Testing
 
         monitor.simulateFailure(.engineFailed("error -10875"))
         #expect(state.micTestStatusText == "Failed: error -10875")
+
+        monitor.simulateFailure(.engineFailed("output device AirPods Pro keeps changing its audio format"))
+        #expect(state.micTestStatusText == "Failed: output device AirPods Pro keeps changing its audio format")
+        #expect(state.isMicTestRunning == false)
     }
 
     @Test func isMicrophoneAccessDeniedOnlyForThatFailure() throws {

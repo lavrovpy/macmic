@@ -21,7 +21,9 @@ import Foundation
 /// (-10875). AVAudioEngine itself runs on a private aggregate of the default
 /// input and output for the same reason; this class builds the equivalent
 /// for mic + default output, with the output as clock master and drift
-/// compensation on the mic. The aggregate is destroyed on every stop.
+/// compensation on the mic, and with each sub-device's other direction
+/// left out (see `createAggregateDevice`). The aggregate is destroyed on
+/// every stop.
 ///
 /// Before building it, the mic's nominal sample rate is pinned to the
 /// output's when the mic supports that rate (and left pinned afterwards):
@@ -37,7 +39,10 @@ import Foundation
 /// `start()`), the default output device changing (the aggregate names a
 /// specific output, so the engine can't notice this itself), and the HAL
 /// device list changing (a vanished mic fails the restart's validation with
-/// `.inputDeviceUnavailable`).
+/// `.inputDeviceUnavailable`). More than `restartLimit` restarts within
+/// `restartWindow` end the session in `.failed(.engineFailed)` naming the
+/// output device, so an output that keeps changing its format can't keep
+/// the engine cycling forever.
 ///
 /// Record/playback reuse the running graph: the input tap appends to a
 /// `ClipRecorder` while recording, and an `AVAudioPlayerNode` attached to
@@ -76,6 +81,8 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     /// after pinning; the HAL applies the change asynchronously.
     static let ratePollInterval: TimeInterval = 0.02
     static let ratePollAttempts = 50
+    static let restartLimit = 3
+    static let restartWindow: TimeInterval = 10
 
     private struct Listener {
         let objectID: AudioObjectID
@@ -90,6 +97,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     private var inputDevice: AudioObjectID?
     private var generation = 0
     private var restartScheduled = false
+    private var restartLimiter = RestartLimiter(limit: restartLimit, window: restartWindow)
 
     private let recorder = ClipRecorder()
     /// The format the running session's input tap delivers; clips are
@@ -114,6 +122,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         generation += 1
         let session = generation
         self.inputDevice = inputDevice
+        restartLimiter.reset()
         transition(to: .starting)
 
         switch AVCaptureDevice.authorizationStatus(for: .audio) {
@@ -282,7 +291,12 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.restartScheduled = false
-            guard self.generation == session, case .running = self.state else { return }
+            guard self.generation == session, case .running(let outputDeviceName) = self.state else { return }
+            guard self.restartLimiter.allowRestart(at: ProcessInfo.processInfo.systemUptime) else {
+                let device = outputDeviceName.map { "output device \($0)" } ?? "the output device"
+                self.fail(.engineFailed("\(device) keeps changing its audio format"))
+                return
+            }
             self.tearDown()
             self.settleRecorder(keepClip: true)
             self.generation += 1
@@ -471,6 +485,14 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
 private extension AVAudioEngineMicrophoneMonitor {
     /// A private (invisible to other processes) aggregate of `input` and
     /// `output`, clocked by `output` with drift compensation on `input`.
+    ///
+    /// Each sub-device contributes one direction only (the same composition
+    /// AVAudioEngine uses for its own default-device aggregate). Without
+    /// `channels-in = 0` the output device's own input streams join the
+    /// aggregate and get run too; for AirPods that means their microphone,
+    /// which drops the Bluetooth link into the hands-free profile at 24 kHz,
+    /// changes the aggregate's format, and restarts the engine — which
+    /// rebuilds the aggregate and starts the cycle again every ~1.5 s.
     static func createAggregateDevice(input: AudioObjectID, output: AudioObjectID) -> Result<AudioObjectID, MicrophoneMonitorError> {
         guard let inputUID = HAL.readString(input, kAudioDevicePropertyDeviceUID) else {
             return .failure(.inputDeviceUnavailable)
@@ -485,8 +507,8 @@ private extension AVAudioEngineMicrophoneMonitor {
             kAudioAggregateDeviceIsStackedKey: 0,
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,
             kAudioAggregateDeviceSubDeviceListKey: [
-                [kAudioSubDeviceUIDKey: inputUID, kAudioSubDeviceDriftCompensationKey: 1],
-                [kAudioSubDeviceUIDKey: outputUID],
+                [kAudioSubDeviceUIDKey: inputUID, kAudioSubDeviceDriftCompensationKey: 1, kAudioSubDeviceOutputChannelsKey: 0],
+                [kAudioSubDeviceUIDKey: outputUID, kAudioSubDeviceInputChannelsKey: 0],
             ],
         ]
         var aggregate = AudioObjectID(kAudioObjectUnknown)
@@ -495,6 +517,33 @@ private extension AVAudioEngineMicrophoneMonitor {
             return .failure(.engineFailed("could not create aggregate device (\(status))"))
         }
         return .success(aggregate)
+    }
+}
+
+// MARK: - Restart limiter
+
+/// Sliding-window count of engine restarts: the first `limit` restarts in
+/// any `window` are allowed, the next one is refused. Pure, so the policy
+/// is unit-testable without an engine.
+struct RestartLimiter {
+    let limit: Int
+    let window: TimeInterval
+    private var restartTimes: [TimeInterval] = []
+
+    init(limit: Int, window: TimeInterval) {
+        self.limit = limit
+        self.window = window
+    }
+
+    /// Records a restart at `time` and reports whether it may go ahead.
+    mutating func allowRestart(at time: TimeInterval) -> Bool {
+        restartTimes.removeAll { time - $0 > window }
+        restartTimes.append(time)
+        return restartTimes.count <= limit
+    }
+
+    mutating func reset() {
+        restartTimes.removeAll()
     }
 }
 

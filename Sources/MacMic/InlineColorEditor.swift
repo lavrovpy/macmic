@@ -18,18 +18,20 @@ struct InlineColorEditor: View {
     /// value isn't rewritten under the user; applied as soon as it parses.
     @State private var hexText = ""
 
-    static let swatches: [QuadcastKit.RGBColor] = [
-        "FFFFFF", "FF0000", "FF6A00", "FFD500", "00FF00", "00FFAA",
-        "00FFFF", "0080FF", "0000FF", "8000FF", "FF00FF", "FF0080",
-    ].compactMap { QuadcastKit.RGBColor(hex: $0) }
+    static let swatches: [(name: String, color: QuadcastKit.RGBColor)] = [
+        ("White", "FFFFFF"), ("Red", "FF0000"), ("Orange", "FF6A00"), ("Yellow", "FFD500"),
+        ("Green", "00FF00"), ("Spring green", "00FFAA"), ("Cyan", "00FFFF"), ("Azure", "0080FF"),
+        ("Blue", "0000FF"), ("Violet", "8000FF"), ("Magenta", "FF00FF"), ("Rose", "FF0080"),
+    ].compactMap { name, hex in QuadcastKit.RGBColor(hex: hex).map { (name: name, color: $0) } }
 
     var body: some View {
         HStack(spacing: 8) {
             ForEach(Array(Self.swatches.enumerated()), id: \.offset) { _, swatch in
-                ColorSwatch(color: swatch, isSelected: swatch == color) {
-                    color = swatch
+                ColorSwatch(color: swatch.color, isSelected: swatch.color == color) {
+                    color = swatch.color
                 }
-                .accessibilityLabel("Preset color \(swatch.hexString)")
+                .accessibilityLabel("\(swatch.name) preset")
+                .accessibilityValue(swatch.color.hexString)
             }
         }
 
@@ -111,5 +113,6 @@ struct ColorSwatch: View {
                 }
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
