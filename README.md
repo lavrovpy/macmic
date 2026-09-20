@@ -106,6 +106,12 @@ The protocol layer (`Sources/QuadcastKit/Protocol/`, and the report-submission s
 
 GPLv2-only, matching the upstream QuadcastRGB license. See [LICENSE](LICENSE).
 
+## Contributing
+
+Pull requests targeting `main` are reviewed by [CodeRabbit](https://www.coderabbit.ai/oss), which is free for public repositories. Review behavior lives in [`.coderabbit.yaml`](.coderabbit.yaml); project conventions in `CLAUDE.md` are picked up automatically.
+
+The GitHub App has to be [installed on this repository](https://github.com/apps/coderabbitai) once (choose **Only select repositories** → `macmic`). After that, CodeRabbit comments on new PRs. Public repos with fewer than 10 stars need a manual first review: comment `@coderabbitai review` on the PR, or `@coderabbitai full review` for a from-scratch pass.
+
 ## Known limitations (v1)
 
 - No per-zone color control (upper/lower zones always match)
