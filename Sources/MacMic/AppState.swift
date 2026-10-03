@@ -122,6 +122,7 @@ public final class AppState: ObservableObject {
     private let defaults: UserDefaults
     private let notificationCenter: NotificationCenter
     private var observerTokens: [NSObjectProtocol] = []
+    private var audioObservation: AudioDeviceObservation?
 
     /// - Parameters:
     ///   - transport: the `HIDTransport` to stream frames over; `open()` is
@@ -179,7 +180,7 @@ public final class AppState: ObservableObject {
         transport.onDeviceConnected = { [weak self] in self?.handleDeviceConnected() }
         transport.onDeviceRemoved = { [weak self] in self?.handleDeviceRemoved() }
         streamer.onError = { [weak self] _ in self?.handleTransportError() }
-        audioControl.onStateChanged = { [weak self] in self?.handleAudioStateChanged($0) }
+        audioObservation = audioControl.observe { [weak self] in self?.handleAudioStateChanged($0) }
         microphoneMonitor.onStateChanged = { [weak self] in self?.handleMicTestStateChanged($0) }
         microphoneMonitor.onLevel = { [weak self] in self?.handleMicTestLevel($0) }
         microphoneMonitor.onRecorderStateChanged = { [weak self] in self?.micRecorderState = $0 }
@@ -199,7 +200,9 @@ public final class AppState: ObservableObject {
         // here — otherwise the UI would show "connected" even with no mic
         // plugged in.
         try? transport.open()
-        // Same contract: presence arrives via `onStateChanged`, not here.
+        // Same contract: presence arrives through `audioObservation`. Open only
+        // after `observe` above: there is no replay on registration, and a
+        // mock control delivers inside `open()`.
         try? audioControl.open()
     }
 

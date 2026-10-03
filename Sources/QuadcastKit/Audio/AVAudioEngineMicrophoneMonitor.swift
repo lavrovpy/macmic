@@ -84,16 +84,11 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     static let restartLimit = 3
     static let restartWindow: TimeInterval = 10
 
-    private struct Listener {
-        let objectID: AudioObjectID
-        var address: AudioObjectPropertyAddress
-        let block: AudioObjectPropertyListenerBlock
-    }
-
+    private let hal = SystemHAL()
     private var engine: AVAudioEngine?
     private var aggregateDevice: AudioObjectID?
     private var configurationObserver: NSObjectProtocol?
-    private var listeners: [Listener] = []
+    private var listeners: [HALListener] = []
     private var inputDevice: AudioObjectID?
     private var generation = 0
     private var restartScheduled = false
@@ -161,18 +156,18 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     /// Validates the mic, pins its rate to the output's, then builds the
     /// engine once the rate has read back (or the wait has timed out).
     private func prepareInputDevice(session: Int) {
-        guard let inputDevice, HAL.isAlive(inputDevice), HAL.channelCount(inputDevice, scope: kAudioObjectPropertyScopeInput) > 0 else {
+        guard let inputDevice, hal.isUsableInput(inputDevice) else {
             fail(.inputDeviceUnavailable)
             return
         }
-        guard let output = HAL.defaultOutputDevice() else {
+        guard let output = hal.defaultOutputDevice() else {
             fail(.engineFailed("no default output device"))
             return
         }
-        let outputRate = HAL.nominalSampleRate(output)
-        guard outputRate > 0, HAL.nominalSampleRate(inputDevice) != outputRate,
-              HAL.availableSampleRates(inputDevice).contains(outputRate),
-              HAL.setNominalSampleRate(inputDevice, outputRate) else {
+        let outputRate = hal.nominalSampleRate(output)
+        guard outputRate > 0, hal.nominalSampleRate(inputDevice) != outputRate,
+              hal.availableSampleRates(inputDevice).contains(outputRate),
+              hal.setNominalSampleRate(inputDevice, outputRate) else {
             startEngine(session: session, output: output)
             return
         }
@@ -184,7 +179,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     private func awaitNominalSampleRate(
         _ device: AudioObjectID, _ rate: Double, attemptsLeft: Int, session: Int, then continuation: @escaping () -> Void
     ) {
-        guard HAL.nominalSampleRate(device) != rate, attemptsLeft > 0 else {
+        guard hal.nominalSampleRate(device) != rate, attemptsLeft > 0 else {
             continuation()
             return
         }
@@ -197,7 +192,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
     private func startEngine(session: Int, output: AudioObjectID) {
         guard let inputDevice else { return }
         let aggregate: AudioObjectID
-        switch Self.createAggregateDevice(input: inputDevice, output: output) {
+        switch createAggregateDevice(input: inputDevice, output: output) {
         case let .success(id):
             aggregate = id
         case let .failure(error):
@@ -270,17 +265,17 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             fail(.engineFailed(error.localizedDescription))
             return
         }
-        transition(to: .running(outputDeviceName: HAL.readString(output, kAudioObjectPropertyName)))
+        transition(to: .running(outputDeviceName: hal.string(output, kAudioObjectPropertyName)))
     }
 
     private func addListener(_ objectID: AudioObjectID, _ address: AudioObjectPropertyAddress, session: Int) {
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
+        let listener = try? hal.addListener(objectID, address, queue: .main) { [weak self] in
             guard let self, self.generation == session else { return }
             self.scheduleRestart(session: session)
         }
-        var address = address
-        guard AudioObjectAddPropertyListenerBlock(objectID, &address, DispatchQueue.main, block) == noErr else { return }
-        listeners.append(Listener(objectID: objectID, address: address, block: block))
+        if let listener {
+            listeners.append(listener)
+        }
     }
 
     /// Coalesces the restart triggers (they tend to arrive together) into
@@ -322,10 +317,7 @@ public final class AVAudioEngineMicrophoneMonitor: MicrophoneMonitor {
             NotificationCenter.default.removeObserver(configurationObserver)
             self.configurationObserver = nil
         }
-        for listener in listeners {
-            var address = listener.address
-            AudioObjectRemovePropertyListenerBlock(listener.objectID, &address, DispatchQueue.main, listener.block)
-        }
+        listeners.forEach(hal.removeListener)
         listeners.removeAll()
         if let engine {
             engine.inputNode.removeTap(onBus: 0)
@@ -493,15 +485,15 @@ private extension AVAudioEngineMicrophoneMonitor {
     /// which drops the Bluetooth link into the hands-free profile at 24 kHz,
     /// changes the aggregate's format, and restarts the engine — which
     /// rebuilds the aggregate and starts the cycle again every ~1.5 s.
-    static func createAggregateDevice(input: AudioObjectID, output: AudioObjectID) -> Result<AudioObjectID, MicrophoneMonitorError> {
-        guard let inputUID = HAL.readString(input, kAudioDevicePropertyDeviceUID) else {
+    func createAggregateDevice(input: AudioObjectID, output: AudioObjectID) -> Result<AudioObjectID, MicrophoneMonitorError> {
+        guard let inputUID = hal.string(input, kAudioDevicePropertyDeviceUID) else {
             return .failure(.inputDeviceUnavailable)
         }
-        guard let outputUID = HAL.readString(output, kAudioDevicePropertyDeviceUID) else {
+        guard let outputUID = hal.string(output, kAudioDevicePropertyDeviceUID) else {
             return .failure(.engineFailed("default output device has no UID"))
         }
         let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: aggregateDeviceName,
+            kAudioAggregateDeviceNameKey: Self.aggregateDeviceName,
             kAudioAggregateDeviceUIDKey: "dev.alavreniuk.macmic.mictest.\(UUID().uuidString)",
             kAudioAggregateDeviceIsPrivateKey: 1,
             kAudioAggregateDeviceIsStackedKey: 0,
