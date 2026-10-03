@@ -13,13 +13,15 @@ import SwiftUI
 /// Core Audio controls as System Settings → Sound, kept in sync with the
 /// mic's gain knob and other apps.
 struct AudioPage: View {
-    @ObservedObject var state: AppState
+    @ObservedObject var audio: AudioControls
+    /// Not observed; see `MicrophoneTestSection`.
+    let microphoneTest: MicrophoneTest
 
     var body: some View {
         Form {
-            if !state.audio.isAvailable {
+            if !audio.isAvailable {
                 Section {
-                    Label(state.audioStatusText, systemImage: "exclamationmark.triangle")
+                    Label(audio.statusText, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -27,30 +29,30 @@ struct AudioPage: View {
             Section("Microphone") {
                 LabeledContent("Gain") {
                     levelRow(
-                        value: $state.micGain,
-                        text: state.micGainText,
+                        value: $audio.micGain,
+                        text: audio.micGainText,
                         minimumImage: "mic",
                         maximumImage: "mic.fill"
                     )
                 }
-                Toggle("Mute microphone", isOn: $state.isMicMuted)
+                Toggle("Mute microphone", isOn: $audio.isMicMuted)
             }
-            .disabled(!state.micControlsEnabled)
+            .disabled(!audio.micControlsEnabled)
 
-            MicrophoneTestSection(test: state.microphoneTest)
+            MicrophoneTestSection(test: microphoneTest)
 
             Section("Headphone Monitoring") {
                 LabeledContent("Volume") {
                     levelRow(
-                        value: $state.monitorVolume,
-                        text: state.monitorVolumeText,
+                        value: $audio.monitorVolume,
+                        text: audio.monitorVolumeText,
                         minimumImage: "speaker.wave.1",
                         maximumImage: "speaker.wave.3"
                     )
                 }
-                Toggle("Mute monitoring", isOn: $state.isMonitorMuted)
+                Toggle("Mute monitoring", isOn: $audio.isMonitorMuted)
             }
-            .disabled(!state.monitorControlsEnabled)
+            .disabled(!audio.monitorControlsEnabled)
 
             Section {
                 Text("These are the QuadCast S's system audio controls. The gain knob on the mic and other apps change them too; MacMic follows along. The polar pattern is a physical knob and can't be set from software.")
@@ -61,7 +63,7 @@ struct AudioPage: View {
         .formStyle(.grouped)
         // Warning: keep this on the `Form`, not on a `Section`. Grouped-Form
         // sections are lazy rows whose `onDisappear` fires on scroll.
-        .onDisappear { state.microphoneTest.audioPageDidDisappear() }
+        .onDisappear { microphoneTest.audioPageDidDisappear() }
     }
 
     private func levelRow(

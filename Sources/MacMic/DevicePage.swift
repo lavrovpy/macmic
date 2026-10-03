@@ -11,8 +11,8 @@ import SwiftUI
 
 /// Lighting and audio connection status and the master lighting switch.
 struct DevicePage: View {
-    @ObservedObject var state: AppState
     @ObservedObject var lighting: Lighting
+    @ObservedObject var audio: AudioControls
 
     var body: some View {
         Form {
@@ -28,9 +28,9 @@ struct DevicePage: View {
                 LabeledContent("Audio") {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(state.audio.isAvailable ? Color.green : Color.red)
+                            .fill(audio.isAvailable ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text(state.audioStatusText)
+                        Text(audio.statusText)
                     }
                 }
                 Toggle("Lighting enabled", isOn: $lighting.settings.isEnabled)

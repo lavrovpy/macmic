@@ -80,8 +80,9 @@ Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input 
 
 ```
 MacMic (SwiftUI MenuBarExtra, .accessory)
-  └─ AppState (audio state, sleep/wake)
+  └─ AppState (composition root: builds the concerns, sleep/wake)
        ├─ Lighting (persisted LightingSettings, presence, send retry)
+       ├─ AudioControls (gain/mute, monitoring volume/mute)
        ├─ MicrophoneTest (Audio page's Test Microphone model)
        └─ QuadcastKit
             ├─ FrameStreamer (resident 55 ms loop)

@@ -28,6 +28,8 @@ final class MockAudioDeviceControl: AudioDeviceControl {
     private(set) var outputID = MockAudioDeviceControl.outputDeviceID
     private(set) var isOpen = false
     private(set) var writes: [Write] = []
+    /// How many `observe` calls preceded the last successful `open()`.
+    private(set) var registrationsAtOpen: Int?
 
     /// Consumed (set back to `nil`) the next time `open()` is called.
     var nextOpenError: AudioDeviceControlError?
@@ -45,6 +47,7 @@ final class MockAudioDeviceControl: AudioDeviceControl {
     /// The levels the device holds, open or not; ids are attached on read.
     private var levels: AudioDeviceSnapshot = .unavailable
     private var lastFreshID: AudioObjectID = 5000
+    private var registrations = 0
 
     var snapshot: AudioDeviceSnapshot {
         guard isOpen else { return .unavailable }
@@ -55,7 +58,8 @@ final class MockAudioDeviceControl: AudioDeviceControl {
     }
 
     func observe(_ handler: @escaping (AudioDeviceSnapshot) -> Void) -> AudioDeviceObservation {
-        observers.add(handler)
+        registrations += 1
+        return observers.add(handler)
     }
 
     func open() throws {
@@ -65,6 +69,7 @@ final class MockAudioDeviceControl: AudioDeviceControl {
         }
         guard !isOpen else { return }
         isOpen = true
+        registrationsAtOpen = registrations
         levels = stateAtOpen ?? .unavailable
         observers.notify(snapshot)
     }

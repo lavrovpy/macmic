@@ -37,12 +37,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// The status item's label. It is the one view alive for the whole app
 /// lifetime (menu and window contents only exist while shown), which is
 /// what lets it turn `.macmicShowMainWindow` into an `openWindow` call.
+/// Observe only `AudioControls` here: the label re-renders on every change
+/// of what it observes, for as long as the app runs.
 private struct MenuBarLabel: View {
-    @ObservedObject var state: AppState
+    @ObservedObject var audio: AudioControls
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Image(systemName: state.isMicMuted ? "mic.slash.fill" : "mic.fill")
+        Image(systemName: audio.isMicMuted ? "mic.slash.fill" : "mic.fill")
             .onReceive(NotificationCenter.default.publisher(for: .macmicShowMainWindow)) { _ in
                 showMainWindow(openWindow)
             }
@@ -75,26 +77,22 @@ private func isMainWindow(_ window: NSWindow) -> Bool {
 @main
 struct MacMicApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @StateObject private var state = AppState(
-        transport: IOUSBHostTransport(),
-        audioControl: CoreAudioDeviceControl(),
-        makeMicrophoneTestSession: MicrophoneTestSession.init(audioControl:)
-    )
+    @StateObject private var app = AppState.live()
 
     var body: some Scene {
         // The MenuBarExtra must stay the first scene: SwiftUI auto-opens the
         // first window-type scene at launch, and a menu bar app must not.
         MenuBarExtra {
-            MenuBarMenu(state: state, lighting: state.lighting)
+            MenuBarMenu(lighting: app.lighting, audio: app.audio)
         } label: {
-            MenuBarLabel(state: state)
+            MenuBarLabel(audio: app.audio)
         }
         .menuBarExtraStyle(.menu)
 
         // `Window` (not `WindowGroup`) so "Open MacMic" always brings up the
         // one existing window instead of opening another copy.
         Window(MainWindowView.windowTitle, id: MainWindowView.windowID) {
-            MainWindowView(state: state)
+            MainWindowView(app: app)
         }
         .windowResizability(.contentMinSize)
         .defaultPosition(.center)

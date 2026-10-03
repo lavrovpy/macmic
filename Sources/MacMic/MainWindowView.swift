@@ -33,15 +33,16 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
 }
 
 /// The app's single window: a sidebar of pages on the left and the selected
-/// page's settings on the right, System Settings-style. All state lives in
-/// `AppState` and the concern objects it owns; the pages only bind to them.
+/// page's settings on the right, System Settings-style. `AppState` isn't
+/// observed (it publishes nothing); each page observes the concern it
+/// renders.
 struct MainWindowView: View {
     /// Scene ID of the `Window` that hosts this view, used by
     /// `openWindow(id:)` from the status menu.
     static let windowID = "main"
     static let windowTitle = "MacMic"
 
-    @ObservedObject var state: AppState
+    let app: AppState
     @State private var page: MainWindowPage? = .lighting
 
     var body: some View {
@@ -53,11 +54,11 @@ struct MainWindowView: View {
         } detail: {
             switch page ?? .lighting {
             case .lighting:
-                LightingPage(lighting: state.lighting)
+                LightingPage(lighting: app.lighting)
             case .audio:
-                AudioPage(state: state)
+                AudioPage(audio: app.audio, microphoneTest: app.microphoneTest)
             case .device:
-                DevicePage(state: state, lighting: state.lighting)
+                DevicePage(lighting: app.lighting, audio: app.audio)
             }
         }
         .navigationTitle((page ?? .lighting).title)

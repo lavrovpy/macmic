@@ -10,13 +10,15 @@ import Foundation
 @testable import MacMic
 @testable import QuadcastKit
 
-/// An `AppState` over mocks, a `ScriptedMicrophoneEngine` behind the real
-/// `MicrophoneTestSession`, one `ManualScheduler` for the session and the
-/// lighting, a private `NotificationCenter` and a `TestDefaults` slot. Mocks
-/// that must be configured before launch are passed in.
+/// The whole `AppState` graph over mocks: a `ScriptedMicrophoneEngine`
+/// behind the real `MicrophoneTestSession`, one `ManualScheduler` for the
+/// session and the lighting, a private `NotificationCenter` and a
+/// `TestDefaults` slot. Mocks that must be configured before launch are
+/// passed in. Only `AppStateTests` build it; each concern is tested
+/// without the rest of the graph.
 final class AppStateFixture {
     private(set) var transport: MockHIDTransport
-    private(set) var audio: MockAudioDeviceControl
+    private(set) var audioControl: MockAudioDeviceControl
     private(set) var engine: ScriptedMicrophoneEngine
     let scheduler = ManualScheduler()
     let notificationCenter = NotificationCenter()
@@ -27,43 +29,44 @@ final class AppStateFixture {
         current!
     }
 
-    var defaults: UserDefaults {
-        testDefaults.defaults
+    /// What this slot holds on disk, as `UserDefaults` would persist it.
+    var persisted: [String: Any] {
+        testDefaults.defaults.persistentDomain(forName: testDefaults.suiteName) ?? [:]
     }
 
     init(
         transport: MockHIDTransport = MockHIDTransport(),
-        audio: MockAudioDeviceControl = MockAudioDeviceControl(),
+        audioControl: MockAudioDeviceControl = MockAudioDeviceControl(),
         engine: ScriptedMicrophoneEngine = ScriptedMicrophoneEngine()
     ) {
         self.transport = transport
-        self.audio = audio
+        self.audioControl = audioControl
         self.engine = engine
-        current = makeState()
+        current = launch()
     }
 
     /// Quits and relaunches on the same defaults, with fresh devices.
     func relaunch(
         transport: MockHIDTransport = MockHIDTransport(),
-        audio: MockAudioDeviceControl = MockAudioDeviceControl()
+        audioControl: MockAudioDeviceControl = MockAudioDeviceControl()
     ) {
         current = nil
         self.transport = transport
-        self.audio = audio
+        self.audioControl = audioControl
         engine = ScriptedMicrophoneEngine()
-        current = makeState()
+        current = launch()
     }
 
     func releaseState() {
         current = nil
     }
 
-    private func makeState() -> AppState {
+    private func launch() -> AppState {
         let engine = engine
         let scheduler = scheduler
         return AppState(
             transport: transport,
-            audioControl: audio,
+            audioControl: audioControl,
             makeMicrophoneTestSession: { MicrophoneTestSession(audioControl: $0, engine: engine, scheduler: scheduler) },
             defaults: testDefaults.defaults,
             notificationCenter: notificationCenter,

@@ -15,8 +15,8 @@ import SwiftUI
 /// window. Deliberately a plain menu rather than a popover so the app has
 /// exactly one window.
 struct MenuBarMenu: View {
-    @ObservedObject var state: AppState
     @ObservedObject var lighting: Lighting
+    @ObservedObject var audio: AudioControls
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
@@ -35,8 +35,8 @@ struct MenuBarMenu: View {
         // No keyboard shortcut: MenuBarExtra shortcuts only work while the
         // menu is open, so one would only suggest a global hotkey that
         // doesn't exist.
-        Toggle("Mute Microphone", isOn: $state.isMicMuted)
-            .disabled(!state.micControlsEnabled)
+        Toggle("Mute Microphone", isOn: $audio.isMicMuted)
+            .disabled(!audio.micControlsEnabled)
 
         Divider()
 
