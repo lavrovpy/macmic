@@ -45,7 +45,7 @@ import Testing
         let state = makeState(transport: transport)
         #expect(state.controlsEnabled == true)
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
         #expect(state.controlsEnabled == false)
 
         transport.simulateConnect()
@@ -57,7 +57,7 @@ import Testing
         let state = makeState(transport: transport)
         #expect(state.connectionStatusText == "QuadCast S connected")
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
         #expect(state.connectionStatusText == "QuadCast S not found")
     }
 

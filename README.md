@@ -87,7 +87,6 @@ MacMic (SwiftUI MenuBarExtra, .accessory)
             ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
             ├─ HIDTransport (protocol) — lighting
             │    ├─ IOUSBHostTransport (raw USB control transfer — the working path)
-            │    ├─ IOKitHIDTransport (IOHIDManager — kept for reference/other systems)
             │    └─ MockHIDTransport (tests)
             ├─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
             │    ├─ CoreAudioDeviceControl (Core Audio HAL)

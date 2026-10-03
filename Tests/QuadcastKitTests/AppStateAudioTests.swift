@@ -108,7 +108,7 @@ import Testing
         #expect(state.isConnected == true)
         #expect(state.micControlsEnabled == true)
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
         #expect(state.isConnected == false)
         #expect(state.controlsEnabled == false)
         #expect(state.micControlsEnabled == true)

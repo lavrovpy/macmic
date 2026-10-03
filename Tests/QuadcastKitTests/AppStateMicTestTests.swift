@@ -230,7 +230,7 @@ import Testing
         state.startMicTest()
         monitor.simulateRunning(outputDeviceName: "AirPods Pro")
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
 
         #expect(state.isConnected == false)
         #expect(monitor.stopCount == 0)

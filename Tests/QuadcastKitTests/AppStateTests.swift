@@ -147,7 +147,7 @@ import Testing
         let color = RGBColor(r: 9, g: 9, b: 9)
         state.mode = .solid(color)
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
         #expect(state.isConnected == false)
 
         transport.simulateConnect()
@@ -155,6 +155,41 @@ import Testing
 
         #expect(state.isConnected == true)
         #expect(transport.sentReports.last == Frame(color: color).dataPacket())
+    }
+
+    /// One mic is two USB functions; the audio function (`0x171d`) going
+    /// away on its own — e.g. re-enumerating — must not take lighting down
+    /// while the control function is still matched.
+    @Test func removingOnlyTheAudioFunctionKeepsLightingConnected() throws {
+        let transport = MockHIDTransport()
+        let state = makeState(transport: transport)
+        let color = RGBColor(r: 4, g: 5, b: 6)
+        state.mode = .solid(color)
+
+        transport.simulateRemoval(productID: 0x171d)
+        state.streamer.tick()
+
+        #expect(state.isConnected == true)
+        #expect(transport.sentReports.last == Frame(color: color).dataPacket())
+    }
+
+    /// The reverse: with only `0x171d` left the transport still reports the
+    /// mic present, but `0x171d` rejects control transfers, so the next send
+    /// fails.
+    @Test func removingOnlyTheControlFunctionFailsTheNextSend() async throws {
+        let transport = MockHIDTransport()
+        let state = makeState(transport: transport)
+        state.mode = .solid(RGBColor(r: 4, g: 5, b: 6))
+
+        transport.simulateRemoval(productID: 0x171f)
+        #expect(state.isConnected == true)
+        let countBeforeSend = transport.sentReports.count
+        state.streamer.tick()
+
+        // FrameStreamer delivers onError on the main queue.
+        try await Task.sleep(nanoseconds: 50_000_000)
+        #expect(transport.sentReports.count == countBeforeSend)
+        #expect(state.isConnected == false)
     }
 
     @Test func wakeReAppliesModeAfterSleepStopped() throws {
@@ -195,7 +230,7 @@ import Testing
         state.mode = .solid(RGBColor(r: 1, g: 2, b: 3))
         state.streamer.tick()
 
-        transport.simulateRemoval()
+        transport.simulateUnplug()
         #expect(state.isConnected == false)
 
         state.mode = .solid(RGBColor(r: 9, g: 9, b: 9))

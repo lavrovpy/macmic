@@ -34,11 +34,6 @@ func fail(_ message: String) -> Never {
 /// Opens the transport and gives the async device-matching notification a
 /// moment to enumerate already-connected QuadCast USB devices before we act
 /// on them.
-///
-/// Uses `IOUSBHostTransport` (raw USB control transfers), not
-/// `IOKitHIDTransport`: per the Task 5 hardware finding, `IOHIDManager`
-/// cannot reach the QuadCast S's vendor-page report handler on this system,
-/// while a raw control transfer via `IOUSBHostDevice` does.
 func openAndWaitForEnumeration() -> IOUSBHostTransport {
     let transport = IOUSBHostTransport()
     do {
