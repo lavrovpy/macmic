@@ -1,0 +1,92 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit review config. Docs: https://docs.coderabbit.ai/reference/configuration
+# Public repos get the OSS plan (Team features) automatically; no application needed.
+# https://www.coderabbit.ai/oss
+
+language: en-US
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  in_progress_fortune: false
+  collapse_walkthrough: true
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+  path_filters:
+    - "!**/.build/**"
+    - "!**/dist/**"
+  path_instructions:
+    - path: "Sources/QuadcastKit/Protocol/**"
+      instructions: |
+        Byte-exact HID protocol types ported from reference/QuadcastRGB.
+        Do not suggest packet-layout, timing, or sequencing changes unless
+        the PR is deliberately changing the protocol against those reference
+        vectors. Do not invent new report IDs, packet fields, or light modes.
+    - path: "Sources/QuadcastKit/FrameStreamer.swift"
+      instructions: |
+        The 55 ms loop must keep running while lighting is on; the device
+        does not persist color. setMode() must reset frameIndex only when
+        LightMode itself changes, not on brightness-only updates.
+    - path: "Sources/QuadcastKit/HID/**"
+      instructions: |
+        IOUSBHostTransport (raw USB control transfer, prefer PID 0x171f) is
+        the working path. IOKitHIDTransport is kept for reference and does
+        not reach this hardware — do not suggest switching back to
+        IOHIDManager. onDeviceRemoved must fire only when every matched USB
+        function is gone, not on the first of the two (0x171f / 0x171d).
+        HIDTransport.open() succeeding only means match notifications were
+        registered; connection state comes from onDeviceConnected.
+    - path: "Sources/QuadcastKit/Audio/**"
+      instructions: |
+        Follow the hardware notes in CLAUDE.md. Audio is the 0x171d USB
+        function and is independent of lighting presence. Mute is element 0
+        only; volume is elements 1 and 2, not 0 — do not add an element-0
+        volume fallback. AVAudioEngine inputNode and outputNode share one
+        HAL unit on macOS; do not suggest binding the mic as CurrentDevice
+        on that unit. Keep the private aggregate (channels-in=0 on the
+        output sub-device, channels-out=0 on the mic). Do not restore the
+        mic's pinned sample rate on stop. AppState.startMicTest must read
+        deviceID(for: .input) at call time, never a cached AudioObjectID.
+        Mock adapters belong in tests; do not call real HAL from tests.
+    - path: "Sources/MacMic/**"
+      instructions: |
+        Keep SwiftUI views thin; testable state lives in AppState and
+        AppState+UI. applyEnabledState() must gate on both isEnabled and
+        isConnected. Prefer InlineColorEditor over ColorPicker. Standalone
+        sliders need an explicit accessibilityLabel. Do not add a Dock icon
+        or leave .accessory. GPLv2-only header on new Swift files.
+    - path: "Sources/macmic-cli/**"
+      instructions: |
+        Keep argument parsing and formatting pure and unit-tested. Hardware
+        I/O stays in the run functions. Do not add a CLI-only protocol path
+        that bypasses QuadcastKit.
+    - path: "Tests/**"
+      instructions: |
+        Swift Testing only. Protocol/frame tests use byte-exact QuadcastRGB
+        vectors. Device/streamer/audio/mic-test logic uses mocks
+        (MockHIDTransport, MockAudioDeviceControl, MockMicrophoneMonitor),
+        never the real IOKit, IOUSBHost, Core Audio, or AVAudioEngine
+        adapters. The mock stop() fires .stopped unconditionally; the
+        hardware adapter only fires it on an actual transition — do not
+        write tests that count .stopped callbacks and expect them to hold
+        on hardware.
+    - path: "scripts/**"
+      instructions: |
+        GPLv2-only header on new shell files. scripts/make-app.sh is the
+        only place the app bundle Info.plist is authored; it must keep
+        NSMicrophoneUsageDescription. Prefer updating scripts/test-make-app.sh
+        when the bundle layout or required plist keys change.
+  finishing_touches:
+    docstrings:
+      enabled: false
+  pre_merge_checks:
+    docstrings:
+      mode: off
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
