@@ -143,15 +143,23 @@ final class AVAudioEngineMicrophoneEngine: MicrophoneEngine {
         guard status == noErr else {
             return .failure(.engineFailed("could not bind aggregate device (\(status))"))
         }
-        let format = inputNode.inputFormat(forBus: 0)
-        guard format.channelCount > 0, format.sampleRate > 0 else {
+        let hardwareFormat = inputNode.inputFormat(forBus: 0)
+        guard hardwareFormat.channelCount > 0, hardwareFormat.sampleRate > 0 else {
             return .failure(.inputDeviceUnavailable)
         }
-        engine.connect(inputNode, to: engine.mainMixerNode, format: format)
+        // Warning: connect and tap with `nil`, never with a format read
+        // earlier. The aggregate's rate follows its main sub-device, which can
+        // change between that read and `connect` (AirPods switching Bluetooth
+        // profile), and a stale explicit format raises an Objective-C
+        // exception ("Input HW format and tap format not matching") that
+        // aborts the process. A change after `connect` arrives as a
+        // configuration change instead.
+        engine.connect(inputNode, to: engine.mainMixerNode, format: nil)
+        let format = inputNode.outputFormat(forBus: 0)
         let player = AVAudioPlayerNode()
         engine.attach(player)
         inputNode.installTap(
-            onBus: 0, bufferSize: Self.tapBufferSize, format: format,
+            onBus: 0, bufferSize: Self.tapBufferSize, format: nil,
             block: Self.inputTap(recorder: recorder, events: events)
         )
         self.engine = engine
@@ -320,10 +328,11 @@ private extension AVAudioEngineMicrophoneEngine {
     /// Each sub-device contributes one direction only (the same composition
     /// AVAudioEngine uses for its own default-device aggregate). Without
     /// `channels-in = 0` the output device's own input streams join the
-    /// aggregate and get run too; for AirPods that means their microphone,
-    /// which drops the Bluetooth link into the hands-free profile at 24 kHz,
-    /// changes the aggregate's format, and restarts the engine — which
-    /// rebuilds the aggregate and starts the cycle again every ~1.5 s.
+    /// aggregate and get run too; for a Bluetooth headset that exposes its
+    /// microphone on the output device, that drops the link into the
+    /// hands-free profile, changes the aggregate's format and restarts the
+    /// engine, over and over. (AVAudioEngine's own default-device aggregate
+    /// does the same through the default input — CLAUDE.md, Hardware notes.)
     func createAggregateDevice(input: AudioObjectID, output: AudioObjectID) -> Result<AudioObjectID, MicrophoneTestError> {
         guard let inputUID = hal.string(input, kAudioDevicePropertyDeviceUID) else {
             return .failure(.inputDeviceUnavailable)
