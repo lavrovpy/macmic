@@ -85,7 +85,7 @@ struct MacMicApp: App {
         // The MenuBarExtra must stay the first scene: SwiftUI auto-opens the
         // first window-type scene at launch, and a menu bar app must not.
         MenuBarExtra {
-            MenuBarMenu(state: state)
+            MenuBarMenu(state: state, lighting: state.lighting)
         } label: {
             MenuBarLabel(state: state)
         }

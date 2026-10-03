@@ -89,19 +89,19 @@ import Testing
         let transport = fixture.transport
         let audio = fixture.audio
         let state = fixture.state
-        #expect(state.isConnected == true)
+        #expect(state.lighting.isDevicePresent == true)
         #expect(state.micControlsEnabled == true)
 
         transport.simulateUnplug()
-        #expect(state.isConnected == false)
-        #expect(state.controlsEnabled == false)
+        #expect(state.lighting.isDevicePresent == false)
+        #expect(state.lighting.controlsEnabled == false)
         #expect(state.micControlsEnabled == true)
         #expect(state.monitorControlsEnabled == true)
 
         transport.simulateConnect()
         audio.simulateDeviceRemoved()
-        #expect(state.isConnected == true)
-        #expect(state.controlsEnabled == true)
+        #expect(state.lighting.isDevicePresent == true)
+        #expect(state.lighting.controlsEnabled == true)
         #expect(state.micControlsEnabled == false)
         #expect(state.monitorControlsEnabled == false)
     }

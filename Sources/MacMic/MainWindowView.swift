@@ -34,7 +34,7 @@ enum MainWindowPage: String, CaseIterable, Identifiable {
 
 /// The app's single window: a sidebar of pages on the left and the selected
 /// page's settings on the right, System Settings-style. All state lives in
-/// `AppState`; the pages only bind to it.
+/// `AppState` and the concern objects it owns; the pages only bind to them.
 struct MainWindowView: View {
     /// Scene ID of the `Window` that hosts this view, used by
     /// `openWindow(id:)` from the status menu.
@@ -53,11 +53,11 @@ struct MainWindowView: View {
         } detail: {
             switch page ?? .lighting {
             case .lighting:
-                LightingPage(state: state)
+                LightingPage(lighting: state.lighting)
             case .audio:
                 AudioPage(state: state)
             case .device:
-                DevicePage(state: state)
+                DevicePage(state: state, lighting: state.lighting)
             }
         }
         .navigationTitle((page ?? .lighting).title)

@@ -6,6 +6,7 @@
 // the Free Software Foundation, version 2 of the License ONLY.
 // See LICENSE for the full license text.
 
+import Foundation
 import IOKit
 @testable import QuadcastKit
 
@@ -17,18 +18,33 @@ import IOKit
 /// once every function is gone, and a send succeeds only while `0x171f` is
 /// matched (with `0x171d` alone it fails with `kIOReturnError`, as on
 /// hardware). Each product id is its own entry id here; callbacks fire
-/// synchronously on the caller.
+/// synchronously on the caller. `sentReports` and `sendAttempts` may be read
+/// while a real-timer streamer sends from its own queue.
 final class MockHIDTransport: HIDTransport {
     var onDeviceConnected: (() -> Void)?
     var onDeviceRemoved: (() -> Void)?
 
-    private(set) var sentReports: [[UInt8]] = []
+    var sentReports: [[UInt8]] {
+        lock.lock()
+        defer { lock.unlock() }
+        return reports
+    }
+
+    /// Every `sendFeatureReport` call, failed ones included.
+    var sendAttempts: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempts
+    }
+
     private(set) var isOpen = false
 
     /// Consumed (set back to `nil`) the next time `open()` is called.
     var nextOpenError: HIDTransportError?
     /// Consumed (set back to `nil`) the next time `sendFeatureReport` is called.
     var nextSendError: HIDTransportError?
+    /// Thrown by every `sendFeatureReport` until set back to `nil`.
+    var persistentSendError: HIDTransportError?
     /// Whether a successful `open()` matches both functions of an
     /// already-plugged-in mic (`0x171f`, then `0x171d`: two
     /// `onDeviceConnected` calls, like the real transport). Set `false` to
@@ -36,6 +52,9 @@ final class MockHIDTransport: HIDTransport {
     var autoConnectOnOpen = true
 
     private var functions = QuadcastFunctionSet<Int>()
+    private let lock = NSLock()
+    private var reports: [[UInt8]] = []
+    private var attempts = 0
 
     func open() throws {
         if let error = nextOpenError {
@@ -55,8 +74,14 @@ final class MockHIDTransport: HIDTransport {
     }
 
     func sendFeatureReport(_ bytes: [UInt8]) throws {
+        lock.lock()
+        attempts += 1
+        lock.unlock()
         if let error = nextSendError {
             nextSendError = nil
+            throw error
+        }
+        if let error = persistentSendError {
             throw error
         }
         let candidates = functions.orderedCandidates
@@ -69,7 +94,9 @@ final class MockHIDTransport: HIDTransport {
             throw HIDTransportError.sendFailed(kIOReturnError)
         }
         functions.markActive(accepting.entryID)
-        sentReports.append(bytes)
+        lock.lock()
+        reports.append(bytes)
+        lock.unlock()
     }
 
     /// Simulates one QuadCast USB function being matched.

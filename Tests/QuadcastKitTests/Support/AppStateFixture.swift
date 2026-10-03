@@ -11,14 +11,10 @@ import Foundation
 @testable import QuadcastKit
 
 /// An `AppState` over mocks, a `ScriptedMicrophoneEngine` behind the real
-/// `MicrophoneTestSession`, a private `NotificationCenter` and a
-/// `TestDefaults` slot. Mocks that must be configured before launch are
-/// passed in.
+/// `MicrophoneTestSession`, one `ManualScheduler` for the session and the
+/// lighting, a private `NotificationCenter` and a `TestDefaults` slot. Mocks
+/// that must be configured before launch are passed in.
 final class AppStateFixture {
-    /// Long enough that the real streamer timer never fires during a test;
-    /// tests drive `state.streamer.tick()` instead.
-    static let dormantStreamerInterval: DispatchTimeInterval = .seconds(3600)
-
     private(set) var transport: MockHIDTransport
     private(set) var audio: MockAudioDeviceControl
     private(set) var engine: ScriptedMicrophoneEngine
@@ -71,7 +67,7 @@ final class AppStateFixture {
             makeMicrophoneTestSession: { MicrophoneTestSession(audioControl: $0, engine: engine, scheduler: scheduler) },
             defaults: testDefaults.defaults,
             notificationCenter: notificationCenter,
-            streamerInterval: Self.dormantStreamerInterval
+            scheduler: scheduler
         )
     }
 }

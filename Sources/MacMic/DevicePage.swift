@@ -12,6 +12,7 @@ import SwiftUI
 /// Lighting and audio connection status and the master lighting switch.
 struct DevicePage: View {
     @ObservedObject var state: AppState
+    @ObservedObject var lighting: Lighting
 
     var body: some View {
         Form {
@@ -19,9 +20,9 @@ struct DevicePage: View {
                 LabeledContent("Lighting") {
                     HStack(spacing: 6) {
                         Circle()
-                            .fill(state.isConnected ? Color.green : Color.red)
+                            .fill(lightingColor)
                             .frame(width: 8, height: 8)
-                        Text(state.connectionStatusText)
+                        Text(lighting.statusText)
                     }
                 }
                 LabeledContent("Audio") {
@@ -32,8 +33,8 @@ struct DevicePage: View {
                         Text(state.audioStatusText)
                     }
                 }
-                Toggle("Lighting enabled", isOn: $state.isEnabled)
-                    .disabled(!state.controlsEnabled)
+                Toggle("Lighting enabled", isOn: $lighting.settings.isEnabled)
+                    .disabled(!lighting.controlsEnabled)
             }
 
             Section {
@@ -43,5 +44,13 @@ struct DevicePage: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var lightingColor: Color {
+        switch lighting.status {
+        case .connected: return .green
+        case .notResponding: return .yellow
+        case .notFound: return .red
+        }
     }
 }

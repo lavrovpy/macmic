@@ -66,9 +66,9 @@ swift run macmic-cli audio test --record 3      # same, but record 3 s of the mi
 
 ## How it works
 
-The QuadCast S does **not** persist software-set colors — it only remembers a color while a host keeps streaming frames to it. MacMic runs a `DispatchSourceTimer` that sends a header packet plus a data packet (upper-zone + lower-zone RGB) every 55 ms for as long as the app is enabled; stop the stream (quit the app, disable it, sleep the Mac) and the mic reverts to its default rainbow.
+The QuadCast S does **not** persist software-set colors — it only remembers a color while a host keeps streaming frames to it. MacMic runs a resident 55 ms loop that sends a header packet plus a data packet (upper-zone + lower-zone RGB) on every tick for as long as the app is enabled; stop the stream (quit the app, disable it, sleep the Mac) and the mic reverts to its default rainbow.
 
-Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the timer's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
+Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the loop's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
 
 On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/completed/20260720-macmic-rgb-control.md) for the full investigation.
 
@@ -80,10 +80,11 @@ Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input 
 
 ```
 MacMic (SwiftUI MenuBarExtra, .accessory)
-  └─ AppState (persistence, hotplug, sleep/wake, audio state)
+  └─ AppState (audio state, sleep/wake)
+       ├─ Lighting (persisted LightingSettings, presence, send retry)
        ├─ MicrophoneTest (Audio page's Test Microphone model)
        └─ QuadcastKit
-            ├─ FrameStreamer (55 ms DispatchSourceTimer)
+            ├─ FrameStreamer (resident 55 ms loop)
             ├─ PresetSequencer (LightMode → [Frame])
             ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
             ├─ HIDTransport (protocol) — lighting
@@ -117,6 +118,7 @@ GPLv2-only, matching the upstream QuadcastRGB license. See [LICENSE](LICENSE).
 - Audio gain/mute are not restored on reconnect — the device and macOS remember them, and restoring a saved value would fight the mic's gain knob and every other app; a "remember and restore" option is a possible future feature
 - Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
 - Test Microphone pins the mic's sample rate to the output's (typically 48 kHz) and leaves it there after the test; it has been verified to start, run and meter the input, but nobody has yet listened to confirm the pass-through is audible
+- Recovery from a failing USB send is retried every ≤10 s, so lighting can take up to 10 s to come back after the device accepts frames again
 - Not code-signed with a Developer ID or notarized — Gatekeeper will warn on first launch
 - Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
 - Unsandboxed: MacMic needs raw USB device access, so it isn't (and can't easily be) distributed via the Mac App Store
