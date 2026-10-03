@@ -15,35 +15,14 @@ import Testing
 /// `AppState`'s audio surface (gain/mute, monitoring volume/mute) driven
 /// through `MockAudioDeviceControl`: availability, optimistic writes, echo
 /// reconciliation, and independence from the lighting connection.
-@Suite struct AppStateAudioTests {
-    private static func freshDefaults(name: String = #function) -> UserDefaults {
-        let suiteName = "dev.alavreniuk.macmic.tests.\(name).\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
-    }
-
-    private func makeState(
-        transport: HIDTransport = MockHIDTransport(),
-        audio: MockAudioDeviceControl = MockAudioDeviceControl(),
-        defaults: UserDefaults? = nil
-    ) -> AppState {
-        AppState(
-            transport: transport,
-            audioControl: audio,
-            microphoneMonitor: MockMicrophoneMonitor(),
-            defaults: defaults ?? Self.freshDefaults(),
-            notificationCenter: NotificationCenter(),
-            streamerInterval: .seconds(3600)
-        )
-    }
-
+@Suite @MainActor struct AppStateAudioTests {
     // MARK: Availability
 
     @Test func audioAbsentAtLaunchLeavesControlsDisabled() throws {
         let audio = MockAudioDeviceControl()
         audio.stateAtOpen = nil
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         #expect(state.audio == .unavailable)
         #expect(state.micControlsEnabled == false)
@@ -54,7 +33,8 @@ import Testing
     @Test func openFailureLeavesAudioUnavailable() throws {
         let audio = MockAudioDeviceControl()
         audio.nextOpenError = .openFailed(-1)
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         #expect(state.audio == .unavailable)
         #expect(state.micControlsEnabled == false)
@@ -63,7 +43,8 @@ import Testing
     @Test func deviceAppearingDeliversValuesAndEnablesControls() throws {
         let audio = MockAudioDeviceControl()
         audio.stateAtOpen = nil
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         audio.simulateDeviceAppeared(.sample)
 
@@ -76,7 +57,8 @@ import Testing
 
     @Test func externalChangeUpdatesPublishedState() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         audio.simulateExternalChange(AudioDeviceSnapshot(
             input: AudioLevel(volume: 0.3, isMuted: true, decibels: -3),
@@ -89,7 +71,8 @@ import Testing
 
     @Test func deviceRemovalClearsValues() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         #expect(state.micControlsEnabled == true)
 
         audio.simulateDeviceRemoved()
@@ -102,9 +85,10 @@ import Testing
     }
 
     @Test func audioAvailabilityIsIndependentOfLightingConnection() throws {
-        let transport = MockHIDTransport()
-        let audio = MockAudioDeviceControl()
-        let state = makeState(transport: transport, audio: audio)
+        let fixture = AppStateFixture()
+        let transport = fixture.transport
+        let audio = fixture.audio
+        let state = fixture.state
         #expect(state.isConnected == true)
         #expect(state.micControlsEnabled == true)
 
@@ -127,7 +111,8 @@ import Testing
     @Test func settingGainReachesControlAndUpdatesOptimistically() throws {
         let audio = MockAudioDeviceControl()
         audio.echoesWrites = false
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.micGain = 0.4
 
@@ -137,7 +122,8 @@ import Testing
 
     @Test func settingMutesReachControl() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.isMicMuted = true
         state.isMonitorMuted = true
@@ -153,7 +139,8 @@ import Testing
 
     @Test func settingMonitorVolumeReachesControl() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.monitorVolume = 0.25
 
@@ -163,7 +150,8 @@ import Testing
 
     @Test func volumeIsClampedBeforeWriting() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.micGain = 1.5
         #expect(audio.writes.last == .volume(1.0, .input))
@@ -177,7 +165,8 @@ import Testing
     @Test func writeIsIgnoredWhileDirectionAbsent() throws {
         let audio = MockAudioDeviceControl()
         audio.stateAtOpen = AudioDeviceSnapshot(input: AudioDeviceSnapshot.sample.input, output: nil)
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         let before = state.audio
 
         state.monitorVolume = 0.5
@@ -190,7 +179,8 @@ import Testing
     @Test func setFailureRevertsToControlSnapshot() throws {
         let audio = MockAudioDeviceControl()
         audio.nextSetError = .setFailed(-1)
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.micGain = 0.9
 
@@ -201,7 +191,8 @@ import Testing
     @Test func micMuteSetFailureRevertsToControlSnapshot() throws {
         let audio = MockAudioDeviceControl()
         audio.nextSetError = .setFailed(-1)
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.isMicMuted = true
 
@@ -213,7 +204,8 @@ import Testing
     @Test func monitorMuteSetFailureRevertsToControlSnapshot() throws {
         let audio = MockAudioDeviceControl()
         audio.nextSetError = .setFailed(-1)
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
 
         state.isMonitorMuted = true
 
@@ -224,7 +216,8 @@ import Testing
 
     @Test func muteSetFailureRevertsToWhatTheControlHoldsNotTheOldUIValue() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         audio.simulateExternalChange(AudioDeviceSnapshot(
             input: AudioLevel(volume: 0.675, isMuted: true, decibels: 2.125),
             output: AudioDeviceSnapshot.sample.output
@@ -241,7 +234,8 @@ import Testing
 
     @Test func echoWithinToleranceKeepsSliderValueButTakesDecibels() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         state.micGain = 0.5
 
         audio.simulateExternalChange(AudioDeviceSnapshot(
@@ -255,7 +249,8 @@ import Testing
 
     @Test func echoOutsideToleranceIsAccepted() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         state.micGain = 0.5
 
         audio.simulateExternalChange(AudioDeviceSnapshot(
@@ -268,7 +263,8 @@ import Testing
 
     @Test func muteChangeIsNeverTreatedAsEcho() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         #expect(state.isMicMuted == false)
 
         audio.simulateExternalChange(AudioDeviceSnapshot(
@@ -297,29 +293,26 @@ import Testing
     // MARK: Lifecycle
 
     @Test func audioStateIsNotPersisted() throws {
-        let defaults = Self.freshDefaults()
-        let first = makeState(audio: MockAudioDeviceControl(), defaults: defaults)
-        first.micGain = 0.2
-        first.isMicMuted = true
+        let fixture = AppStateFixture()
+        fixture.state.micGain = 0.2
+        fixture.state.isMicMuted = true
 
-        let audioKeys = defaults.dictionaryRepresentation().keys.filter { $0.lowercased().contains("audio") }
+        let audioKeys = fixture.defaults.dictionaryRepresentation().keys.filter { $0.lowercased().contains("audio") }
         #expect(audioKeys.isEmpty)
 
         let audio = MockAudioDeviceControl()
         audio.stateAtOpen = nil
-        let second = makeState(audio: audio, defaults: defaults)
-        #expect(second.audio == .unavailable)
+        fixture.relaunch(audio: audio)
+        #expect(fixture.state.audio == .unavailable)
     }
 
     @Test func deinitClosesAudioControl() throws {
-        let audio = MockAudioDeviceControl()
-        var state: AppState? = makeState(audio: audio)
-        #expect(audio.isOpen == true)
-        #expect(state != nil)
+        let fixture = AppStateFixture()
+        #expect(fixture.audio.isOpen == true)
 
-        state = nil
+        fixture.releaseState()
 
-        #expect(audio.isOpen == false)
+        #expect(fixture.audio.isOpen == false)
     }
 
     // MARK: UI text
@@ -333,7 +326,8 @@ import Testing
 
     @Test func audioStatusTextReflectsAvailability() throws {
         let audio = MockAudioDeviceControl()
-        let state = makeState(audio: audio)
+        let fixture = AppStateFixture(audio: audio)
+        let state = fixture.state
         #expect(state.audioStatusText == "Audio device connected")
 
         audio.simulateDeviceRemoved()

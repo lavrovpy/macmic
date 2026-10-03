@@ -155,13 +155,6 @@ public protocol AudioDeviceControl: AnyObject {
     func setMuted(_ muted: Bool, for direction: AudioDirection) throws
 }
 
-public extension AudioDeviceControl {
-    /// The HAL device serving `direction` in the current `snapshot`.
-    func deviceID(for direction: AudioDirection) -> AudioObjectID? {
-        snapshot.deviceIDs[direction]
-    }
-}
-
 /// The observer table both implementations share. NSLock-protected;
 /// `notify` calls handlers outside the lock.
 final class AudioObservers {

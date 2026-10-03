@@ -37,67 +37,7 @@ struct AudioPage: View {
             }
             .disabled(!state.micControlsEnabled)
 
-            Section {
-                LabeledContent("Listen") {
-                    Button(state.isMicTestRunning ? "Stop Test" : "Start Test") {
-                        if state.isMicTestRunning {
-                            state.stopMicTest()
-                        } else {
-                            state.startMicTest()
-                        }
-                    }
-                }
-                LabeledContent("Level") {
-                    LevelMeter(level: state.micTestLevel)
-                }
-                Text(state.micTestStatusText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                LabeledContent("Record") {
-                    HStack(spacing: 8) {
-                        Button {
-                            if state.isMicRecording {
-                                state.stopMicRecording()
-                            } else {
-                                state.startMicRecording()
-                            }
-                        } label: {
-                            Label(
-                                state.isMicRecording ? "Stop Recording" : "Record",
-                                systemImage: state.isMicRecording ? "stop.fill" : "record.circle"
-                            )
-                        }
-                        .disabled(!state.micRecordControlsEnabled)
-                        Button {
-                            if state.isMicPlaying {
-                                state.stopMicPlayback()
-                            } else {
-                                state.playMicRecording()
-                            }
-                        } label: {
-                            Label(
-                                state.isMicPlaying ? "Stop" : "Play",
-                                systemImage: state.isMicPlaying ? "stop.fill" : "play.fill"
-                            )
-                        }
-                        .disabled(!state.micPlayControlsEnabled)
-                    }
-                }
-                Text(state.micRecorderStatusText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-                if state.isMicrophoneAccessDenied {
-                    Button("Open System Settings") {
-                        NSWorkspace.shared.open(Self.microphonePrivacySettingsURL)
-                    }
-                }
-            } header: {
-                Text("Test Microphone")
-            } footer: {
-                Text("Plays the microphone through your current output device so you can hear gain changes, or record up to \(Int(state.micMaxClipDuration)) seconds and play it back. Use headphones to avoid feedback while listening live.")
-            }
-            .disabled(!state.micTestControlsEnabled)
+            MicrophoneTestSection(test: state.microphoneTest)
 
             Section("Headphone Monitoring") {
                 LabeledContent("Volume") {
@@ -119,13 +59,10 @@ struct AudioPage: View {
             }
         }
         .formStyle(.grouped)
-        // The pass-through is only meaningful while the user is looking at
-        // the gain slider; leaving the page (or closing the window) ends it.
-        .onDisappear { state.stopMicTest() }
+        // Warning: keep this on the `Form`, not on a `Section`. Grouped-Form
+        // sections are lazy rows whose `onDisappear` fires on scroll.
+        .onDisappear { state.microphoneTest.audioPageDidDisappear() }
     }
-
-    private static let microphonePrivacySettingsURL =
-        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
 
     private func levelRow(
         value: Binding<Float>,
@@ -147,6 +84,67 @@ struct AudioPage: View {
                 .frame(width: 110, alignment: .trailing)
         }
     }
+}
+
+/// The Test Microphone section. The only view that observes
+/// `MicrophoneTest`, so the level tick re-renders nothing else.
+private struct MicrophoneTestSection: View {
+    @ObservedObject var test: MicrophoneTest
+
+    var body: some View {
+        Section {
+            LabeledContent("Listen") {
+                Button(test.isActive ? "Stop Test" : "Start Test") {
+                    test.toggleTest()
+                }
+            }
+            LabeledContent("Level") {
+                LevelMeter(level: test.level)
+            }
+            Text(test.statusText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            LabeledContent("Record") {
+                HStack(spacing: 8) {
+                    Button {
+                        test.toggleRecording()
+                    } label: {
+                        Label(
+                            test.isRecording ? "Stop Recording" : "Record",
+                            systemImage: test.isRecording ? "stop.fill" : "record.circle"
+                        )
+                    }
+                    .disabled(!test.recordButtonEnabled)
+                    Button {
+                        test.togglePlayback()
+                    } label: {
+                        Label(
+                            test.isPlaying ? "Stop" : "Play",
+                            systemImage: test.isPlaying ? "stop.fill" : "play.fill"
+                        )
+                    }
+                    .disabled(!test.playButtonEnabled)
+                }
+            }
+            Text(test.recorderStatusText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            if test.isMicrophoneAccessDenied {
+                Button("Open System Settings") {
+                    NSWorkspace.shared.open(Self.microphonePrivacySettingsURL)
+                }
+            }
+        } header: {
+            Text("Test Microphone")
+        } footer: {
+            Text("Plays the microphone through your current output device so you can hear gain changes, or record up to \(Int(test.maxClipDuration)) seconds and play it back. Use headphones to avoid feedback while listening live.")
+        }
+        .disabled(!test.controlsEnabled)
+    }
+
+    private static let microphonePrivacySettingsURL =
+        URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
 }
 
 /// Horizontal input level bar: green up to -18 dBFS-ish (0.7), yellow to

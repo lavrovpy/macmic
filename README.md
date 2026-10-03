@@ -74,13 +74,14 @@ On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast
 
 Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
 
-Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work) or the mic reappears. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
+Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work) or the mic re-enumerates; unplugging the mic ends the test. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
 
 ### Architecture
 
 ```
 MacMic (SwiftUI MenuBarExtra, .accessory)
   └─ AppState (persistence, hotplug, sleep/wake, audio state)
+       ├─ MicrophoneTest (Audio page's Test Microphone model)
        └─ QuadcastKit
             ├─ FrameStreamer (55 ms DispatchSourceTimer)
             ├─ PresetSequencer (LightMode → [Frame])
@@ -91,10 +92,12 @@ MacMic (SwiftUI MenuBarExtra, .accessory)
             ├─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
             │    ├─ CoreAudioDeviceControl (Core Audio HAL)
             │    └─ MockAudioDeviceControl (tests)
-            └─ MicrophoneMonitor (protocol) — Test Microphone pass-through + level meter + record/playback
-                 ├─ AVAudioEngineMicrophoneMonitor (AVAudioEngine on a private aggregate device)
-                 └─ MockMicrophoneMonitor (tests)
-macmic-cli (probe / solid / cycle / blink / audio, incl. audio test)
+            └─ MicrophoneTestSession — Test Microphone pass-through + level meter + record/playback
+                 └─ MicrophoneEngine (internal protocol)
+                      ├─ AVAudioEngineMicrophoneEngine (AVAudioEngine on a private aggregate device)
+                      └─ ScriptedMicrophoneEngine (tests)
+macmic-cli (probe / solid / cycle / blink / audio)
+  └─ MicrophoneTestRun (audio test)
 ```
 
 ## Credits

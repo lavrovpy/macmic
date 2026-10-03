@@ -124,10 +124,10 @@ private func formatLevel(_ level: AudioLevel?, valueName: String) -> String {
     return text
 }
 
-/// One line describing a `MicrophoneMonitor` transition, e.g.
+/// One line describing a Test Microphone phase, e.g.
 /// `running: playing through AirPods Pro`.
-func formatMonitorState(_ state: MicrophoneMonitorState) -> String {
-    switch state {
+func formatTestPhase(_ phase: MicrophoneTestPhase) -> String {
+    switch phase {
     case .stopped:
         return "stopped"
     case .starting:

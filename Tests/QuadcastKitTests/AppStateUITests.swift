@@ -18,31 +18,11 @@ import Testing
 /// `connectionStatusText`), shared by the status menu and the main
 /// window. Kept separate from `AppStateTests` (which covers the core
 /// persistence/hotplug model those derivations read from).
-@Suite struct AppStateUITests {
-    private static func freshDefaults(name: String = #function) -> UserDefaults {
-        let suiteName = "dev.alavreniuk.macmic.tests.\(name).\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
-    }
-
-    private func makeState(
-        transport: HIDTransport = MockHIDTransport(),
-        audioControl: AudioDeviceControl = MockAudioDeviceControl()
-    ) -> AppState {
-        AppState(
-            transport: transport,
-            audioControl: audioControl,
-            microphoneMonitor: MockMicrophoneMonitor(),
-            defaults: Self.freshDefaults(),
-            notificationCenter: NotificationCenter(),
-            streamerInterval: .seconds(3600)
-        )
-    }
-
+@Suite @MainActor struct AppStateUITests {
     @Test func controlsEnabledMirrorsConnectionState() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
+        let fixture = AppStateFixture()
+        let transport = fixture.transport
+        let state = fixture.state
         #expect(state.controlsEnabled == true)
 
         transport.simulateUnplug()
@@ -53,8 +33,9 @@ import Testing
     }
 
     @Test func connectionStatusTextReflectsConnectionState() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
+        let fixture = AppStateFixture()
+        let transport = fixture.transport
+        let state = fixture.state
         #expect(state.connectionStatusText == "QuadCast S connected")
 
         transport.simulateUnplug()
@@ -62,21 +43,24 @@ import Testing
     }
 
     @Test func solidColorReflectsCurrentSolidMode() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .solid(RGBColor(r: 0x10, g: 0x20, b: 0x30))
 
         #expect(rgbColor(from: state.solidColor) == RGBColor(r: 0x10, g: 0x20, b: 0x30))
     }
 
     @Test func solidColorFallsBackToWhiteWhenModeIsNotSolid() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .cycle(speed: 50)
 
         #expect(rgbColor(from: state.solidColor) == RGBColor(r: 0xFF, g: 0xFF, b: 0xFF))
     }
 
     @Test func settingSolidColorSwitchesModeToSolid() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .cycle(speed: 50)
 
         state.solidColor = .init(.sRGB, red: 1, green: 0, blue: 0, opacity: 1)
@@ -85,7 +69,8 @@ import Testing
     }
 
     @Test func solidColorSurvivesSwitchingToAndFromAPreset() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .solid(RGBColor(r: 0xAA, g: 0xBB, b: 0xCC))
 
         state.mode = .cycle(speed: 50)
@@ -98,7 +83,8 @@ import Testing
     // MARK: modeKind
 
     @Test func modeKindReflectsActiveMode() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
 
         state.mode = .solid(RGBColor(r: 1, g: 2, b: 3))
         #expect(state.modeKind == .solid)
@@ -109,7 +95,8 @@ import Testing
     }
 
     @Test func switchingModeKindRestoresEachModesRememberedPayload() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         let solid = RGBColor(r: 0x11, g: 0x22, b: 0x33)
         let blinkColors = [RGBColor(r: 1, g: 1, b: 1), RGBColor(r: 2, g: 2, b: 2)]
         state.mode = .solid(solid)
@@ -128,7 +115,8 @@ import Testing
     /// Before the user has ever used Blink, it starts from the solid color,
     /// not from a fixed white.
     @Test func firstBlinkSeedsFromSolidColorAtDefaultSpeed() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         let solid = RGBColor(r: 0xAA, g: 0x00, b: 0x55)
         state.mode = .solid(solid)
 
@@ -140,8 +128,9 @@ import Testing
     /// Re-selecting the active kind (e.g. a `Picker` reporting the same
     /// segment) must not touch `mode`, or a running animation would restart.
     @Test func reselectingCurrentModeKindIsANoOp() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
+        let fixture = AppStateFixture()
+        let transport = fixture.transport
+        let state = fixture.state
         let mode = LightMode.cycle(speed: 33)
         let expectedFrames = PresetSequencer.frames(for: mode)
         state.mode = mode
@@ -157,7 +146,8 @@ import Testing
     // MARK: presetSpeed
 
     @Test func presetSpeedUpdatesActivePresetInPlaceAndClamps() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         let colors = [RGBColor(r: 5, g: 6, b: 7)]
         state.mode = .blink(colors: colors, speed: 50)
 
@@ -174,7 +164,8 @@ import Testing
     }
 
     @Test func presetSpeedShowsLastPresetSpeedWhileSolidAndIgnoresSets() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .cycle(speed: 64)
         state.mode = .solid(RGBColor(r: 1, g: 1, b: 1))
 
@@ -189,7 +180,8 @@ import Testing
     // MARK: blinkColors
 
     @Test func settingBlinkColorsSwitchesToBlinkKeepingSpeed() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         state.mode = .cycle(speed: 25)
         let colors = [RGBColor(r: 9, g: 8, b: 7), RGBColor(r: 6, g: 5, b: 4)]
 
@@ -200,7 +192,8 @@ import Testing
     }
 
     @Test func emptyBlinkColorsAreRejected() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         let colors = [RGBColor(r: 9, g: 8, b: 7)]
         state.mode = .blink(colors: colors, speed: 25)
 
@@ -210,7 +203,8 @@ import Testing
     }
 
     @Test func blinkColorsSurviveSwitchingToAnotherModeAndBack() throws {
-        let state = makeState()
+        let fixture = AppStateFixture()
+        let state = fixture.state
         let colors = [RGBColor(r: 9, g: 8, b: 7), RGBColor(r: 6, g: 5, b: 4)]
         state.mode = .blink(colors: colors, speed: 25)
 
