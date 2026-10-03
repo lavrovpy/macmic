@@ -137,6 +137,21 @@ import Testing
         #expect(fixture.engine.preparedInputs.isEmpty)
     }
 
+    @Test func accessAnswerFromAnEarlierStartIsIgnored() {
+        let fixture = MicrophoneTestFixture { $0.access = .notDetermined }
+        fixture.session.start()
+        fixture.session.stop()
+        fixture.session.start()
+        #expect(fixture.engine.count(of: .requestMicrophoneAccess) == 2)
+
+        fixture.engine.answerPreviousAccessPrompt(true)
+        #expect(fixture.session.status == Self.starting)
+        #expect(fixture.engine.preparedInputs.isEmpty)
+
+        fixture.engine.answerAccessPrompt(true)
+        #expect(fixture.log!.statuses == [Self.starting, .make(.stopped), Self.starting, Self.running])
+    }
+
     @Test func accessPromptReadsTheInputIDAfterTheAnswer() {
         let fixture = MicrophoneTestFixture { $0.access = .notDetermined }
         fixture.session.start()

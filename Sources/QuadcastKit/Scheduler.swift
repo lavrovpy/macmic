@@ -63,8 +63,9 @@ private final class RepeatingWorkBox {
     var isCancelled = false
 }
 
-/// Idempotent and thread-safe. Cancelling on the action's own queue before
-/// it starts guarantees it never runs.
+/// Idempotent. `DispatchScheduler`'s work can be cancelled from any thread;
+/// a `scheduleRepeating` chain must be cancelled on its queue. Cancelling on
+/// the action's own queue before it starts guarantees it never runs.
 public final class ScheduledWork {
     private let lock = NSLock()
     private var cancelAction: (() -> Void)?

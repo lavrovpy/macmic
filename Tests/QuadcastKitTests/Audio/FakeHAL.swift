@@ -165,6 +165,13 @@ final class FakeHAL: HALPort {
         fireDeviceListChanged()
     }
 
+    /// Every device gone with one device-list change — unlike `unplug` per
+    /// device, no listener can observe a partial removal.
+    func unplugAll() {
+        locked { devices.removeAll() }
+        fireDeviceListChanged()
+    }
+
     /// The same devices under new ids, with one device-list change.
     func reenumerate(_ mapping: [AudioObjectID: AudioObjectID]) {
         locked {

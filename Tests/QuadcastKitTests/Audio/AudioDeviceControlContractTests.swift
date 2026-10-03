@@ -48,7 +48,7 @@ private final class CoreAudioHarness: ControlHarness {
     }
 
     func unplugAll() {
-        fixture.hal.deviceIDs().forEach(fixture.hal.unplug)
+        fixture.hal.unplugAll()
     }
 
     func replug(newInputID: AudioObjectID) {

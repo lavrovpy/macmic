@@ -246,6 +246,20 @@ import Testing
         #expect(fixture.deliveries.last?.input?.isMuted == false)
     }
 
+    @Test func ownVolumeWriteRevertedBeforeItsDeliveryIsStillDelivered() throws {
+        let fixture = try Self.openedFixture()
+
+        fixture.callbackQueue.suspend()
+        try fixture.control.setVolume(0.5, for: .input)
+        fixture.hal.changeExternally(Self.inputID, scope: Self.inputScope, volume: 0.675)
+        _ = fixture.control.snapshot  // both listeners have run; the deliveries wait on the suspended queue
+        fixture.callbackQueue.resume()
+        fixture.settle()
+
+        #expect(fixture.deliveries.count == 2)
+        #expect(fixture.deliveries.last?.input?.volume == 0.675)
+    }
+
     @Test func volumeWritesEveryChannelElementNeverElementZero() throws {
         let fixture = try Self.openedFixture()
 
@@ -351,6 +365,8 @@ import Testing
         fixture.settle()
 
         #expect(fixture.deliveries.count == 1)
+        #expect(fixture.hal.liveListeners.isEmpty)
+        #expect(fixture.control.snapshot.isIdentical(to: .unavailable))
     }
 
     @Test func burstsCoalesceToTheLatestValue() throws {

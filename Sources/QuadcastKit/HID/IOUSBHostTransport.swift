@@ -89,10 +89,10 @@ public final class IOUSBHostTransport: HIDTransport {
         handleRemoved(removalIterator)
     }
 
-    /// Tears down notifications and devices in a single `queue.sync` so a
-    /// matched/removed notification already scheduled on `queue` can't run
-    /// between the iterator/port teardown and the device teardown and add an
-    /// entry to `functions` that never gets `destroy()`-ed.
+    /// Tears down the iterators, the port and the devices in one
+    /// `queue.sync`. `handleMatched` seizes a device before its insert hops
+    /// onto `queue`, so an insert that lands after this finds the port gone
+    /// and destroys its device instead of adding it.
     public func close() {
         queue.sync {
             if matchIterator != 0 {
@@ -204,7 +204,10 @@ public final class IOUSBHostTransport: HIDTransport {
             ) else { continue }
             let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
             queue.async { [weak self] in
-                guard let self else { return }
+                guard let self, self.notificationPort != nil else {
+                    device.destroy()
+                    return
+                }
                 self.functions.insert(device, entryID: entryID, productID: productID)?.destroy()
                 DispatchQueue.main.async { self.onDeviceConnected?() }
             }

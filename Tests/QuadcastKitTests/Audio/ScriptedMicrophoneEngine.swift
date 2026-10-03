@@ -16,8 +16,10 @@ import Testing
 /// `emit…`, `fill…` and `finish…` methods — never from inside a port call.
 /// Port preconditions the session must honour are checked with
 /// `Issue.record`. On `stop()` (and on `stopRecording`/`stopPlayback` for
-/// their own callbacks) the current callbacks become the "previous" ones, so
-/// a test can deliver a stale callback the way the real engine may.
+/// their own callbacks) the current callbacks become the "previous" ones, as
+/// does a pending access completion that a new `requestMicrophoneAccess`
+/// replaces, so a test can deliver a stale callback the way the real engine
+/// may.
 final class ScriptedMicrophoneEngine: MicrophoneEngine {
     enum Call: Equatable {
         case microphoneAccess, requestMicrophoneAccess, prepare(input: AudioObjectID), isSettled
@@ -47,6 +49,7 @@ final class ScriptedMicrophoneEngine: MicrophoneEngine {
     private var polls = 0
     private var maxDuration: TimeInterval = 0
     private var pendingAccess: ((Bool) -> Void)?
+    private var previousAccess: ((Bool) -> Void)?
     private var events: ((MicrophoneEngineEvent) -> Void)?
     private var previousEvents: ((MicrophoneEngineEvent) -> Void)?
     private var onFull: (() -> Void)?
@@ -79,6 +82,9 @@ final class ScriptedMicrophoneEngine: MicrophoneEngine {
 
     func requestMicrophoneAccess(_ completion: @escaping (Bool) -> Void) {
         calls.append(.requestMicrophoneAccess)
+        if let pendingAccess {
+            previousAccess = pendingAccess
+        }
         pendingAccess = completion
     }
 
@@ -186,6 +192,15 @@ final class ScriptedMicrophoneEngine: MicrophoneEngine {
             return
         }
         pendingAccess = nil
+        completion(granted)
+    }
+
+    func answerPreviousAccessPrompt(_ granted: Bool) {
+        guard let completion = previousAccess else {
+            Issue.record("answerPreviousAccessPrompt without a replaced access prompt")
+            return
+        }
+        previousAccess = nil
         completion(granted)
     }
 

@@ -59,9 +59,10 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
     /// Levels only — the app's view. QuadcastKit code that must see
     /// re-enumerations uses `isIdentical(to:)`.
     ///
-    /// Both this and `isIdentical(to:)` list the stored properties by hand:
-    /// a new stored property must be added to both, or deduplication on
-    /// either side silently swallows changes to it.
+    /// Stored properties are listed by hand; `isIdentical(to:)` is this plus
+    /// `deviceIDs`. Add a new level/state property here (`isIdentical` then
+    /// covers it); add a new identity property to `isIdentical` only — never
+    /// here, or id-only re-enumerations start publishing in the app.
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.input == rhs.input && lhs.output == rhs.output
     }
