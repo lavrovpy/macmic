@@ -146,14 +146,14 @@ import Testing
         #expect(formatRecorderState(.playing(elapsed: 0.5, clipDuration: 3)) == "playing 0.5 / 3.0 s")
     }
 
-    @Test func formatMonitorStateDescribesEveryState() {
-        #expect(formatMonitorState(.stopped) == "stopped")
-        #expect(formatMonitorState(.starting) == "starting…")
-        #expect(formatMonitorState(.running(outputDeviceName: "AirPods Pro")) == "running: playing through AirPods Pro")
-        #expect(formatMonitorState(.running(outputDeviceName: nil)) == "running: playing through default output")
-        #expect(formatMonitorState(.failed(.microphoneAccessDenied)).hasPrefix("failed: microphone access denied"))
-        #expect(formatMonitorState(.failed(.inputDeviceUnavailable)) == "failed: input device unavailable")
-        #expect(formatMonitorState(.failed(.engineFailed("boom"))) == "failed: audio engine error: boom")
+    @Test func formatTestPhaseDescribesEveryPhase() {
+        #expect(formatTestPhase(.stopped) == "stopped")
+        #expect(formatTestPhase(.starting) == "starting…")
+        #expect(formatTestPhase(.running(outputDeviceName: "AirPods Pro")) == "running: playing through AirPods Pro")
+        #expect(formatTestPhase(.running(outputDeviceName: nil)) == "running: playing through default output")
+        #expect(formatTestPhase(.failed(.microphoneAccessDenied)).hasPrefix("failed: microphone access denied"))
+        #expect(formatTestPhase(.failed(.inputDeviceUnavailable)) == "failed: input device unavailable")
+        #expect(formatTestPhase(.failed(.engineFailed("boom"))) == "failed: audio engine error: boom")
     }
 
     @Test func formatLevelMeterIsFixedWidthAndClamped() {

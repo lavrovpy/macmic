@@ -66,36 +66,40 @@ swift run macmic-cli audio test --record 3      # same, but record 3 s of the mi
 
 ## How it works
 
-The QuadCast S does **not** persist software-set colors — it only remembers a color while a host keeps streaming frames to it. MacMic runs a `DispatchSourceTimer` that sends a header packet plus a data packet (upper-zone + lower-zone RGB) every 55 ms for as long as the app is enabled; stop the stream (quit the app, disable it, sleep the Mac) and the mic reverts to its default rainbow.
+The QuadCast S does **not** persist software-set colors — it only remembers a color while a host keeps streaming frames to it. MacMic runs a resident 55 ms loop that sends a header packet plus a data packet (upper-zone + lower-zone RGB) on every tick for as long as the app is enabled; stop the stream (quit the app, disable it, sleep the Mac) and the mic reverts to its default rainbow.
 
-Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the timer's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
+Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the loop's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
 
 On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/completed/20260720-macmic-rgb-control.md) for the full investigation.
 
 Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
 
-Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work) or the mic reappears. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
+Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work). The mic disappearing ends the test, including a re-enumeration of its audio function, which macOS reports as a removal before the mic comes back. Known issue: when a Bluetooth headset's microphone (AirPods) is the system default *input*, starting the test switches the headset to its lower-quality hands-free profile, and the format changes that causes restart the test and cut recordings short; making the QuadCast the default input in System Settings → Sound avoided it with a wired output; with AirPods as the output it hasn't been tried yet. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
 
 ### Architecture
 
 ```
 MacMic (SwiftUI MenuBarExtra, .accessory)
-  └─ AppState (persistence, hotplug, sleep/wake, audio state)
+  └─ AppState (composition root: builds the concerns, sleep/wake)
+       ├─ Lighting (persisted LightingSettings, presence, send retry)
+       ├─ AudioControls (gain/mute, monitoring volume/mute)
+       ├─ MicrophoneTest (Audio page's Test Microphone model)
        └─ QuadcastKit
-            ├─ FrameStreamer (55 ms DispatchSourceTimer)
+            ├─ FrameStreamer (resident 55 ms loop)
             ├─ PresetSequencer (LightMode → [Frame])
             ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
             ├─ HIDTransport (protocol) — lighting
             │    ├─ IOUSBHostTransport (raw USB control transfer — the working path)
-            │    ├─ IOKitHIDTransport (IOHIDManager — kept for reference/other systems)
             │    └─ MockHIDTransport (tests)
             ├─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
             │    ├─ CoreAudioDeviceControl (Core Audio HAL)
             │    └─ MockAudioDeviceControl (tests)
-            └─ MicrophoneMonitor (protocol) — Test Microphone pass-through + level meter + record/playback
-                 ├─ AVAudioEngineMicrophoneMonitor (AVAudioEngine on a private aggregate device)
-                 └─ MockMicrophoneMonitor (tests)
-macmic-cli (probe / solid / cycle / blink / audio, incl. audio test)
+            └─ MicrophoneTestSession — Test Microphone pass-through + level meter + record/playback
+                 └─ MicrophoneEngine (internal protocol)
+                      ├─ AVAudioEngineMicrophoneEngine (AVAudioEngine on a private aggregate device)
+                      └─ ScriptedMicrophoneEngine (tests)
+macmic-cli (probe / solid / cycle / blink / audio)
+  └─ MicrophoneTestRun (audio test)
 ```
 
 ## Credits
@@ -121,6 +125,7 @@ The GitHub App has to be [installed on this repository](https://github.com/apps/
 - Audio gain/mute are not restored on reconnect — the device and macOS remember them, and restoring a saved value would fight the mic's gain knob and every other app; a "remember and restore" option is a possible future feature
 - Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
 - Test Microphone pins the mic's sample rate to the output's (typically 48 kHz) and leaves it there after the test; it has been verified to start, run and meter the input, but nobody has yet listened to confirm the pass-through is audible
+- Recovery from a failing USB send is retried every ≤10 s, so lighting can take up to 10 s to come back after the device accepts frames again; this path hasn't been seen on hardware (a second process can't take the device from a running MacMic to provoke it) and is covered only by `LightingTests`
 - Not code-signed with a Developer ID or notarized — Gatekeeper will warn on first launch
 - Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
 - Unsandboxed: MacMic needs raw USB device access, so it isn't (and can't easily be) distributed via the Mac App Store

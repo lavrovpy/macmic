@@ -92,14 +92,14 @@ import Testing
         let recorder = ClipRecorder()
         #expect(recorder.isRecording == false)
         #expect(recorder.elapsed == 0)
-        #expect(recorder.append(Self.buffer(Self.stereo, frames: 10, base: 0)) == false)
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 10, base: 0)) == nil)
         #expect(recorder.stop() == nil)
 
-        #expect(recorder.start(format: Self.stereo, capacity: 48_000) == true)
+        #expect(recorder.start(format: Self.stereo, capacity: 48_000, onFull: {}) == true)
         #expect(recorder.isRecording == true)
-        #expect(recorder.append(Self.buffer(Self.stereo, frames: 24_000, base: 0)) == false)
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 24_000, base: 0)) == nil)
         #expect(recorder.elapsed == 0.5)
-        #expect(recorder.append(Self.buffer(Self.stereo, frames: 24_000, base: 0)) == true)
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 24_000, base: 0)) != nil)
         #expect(recorder.elapsed == 1)
 
         let clip = recorder.stop()
@@ -111,7 +111,46 @@ import Testing
 
     @Test func stopReturnsNilForAnEmptyRecording() {
         let recorder = ClipRecorder()
-        #expect(recorder.start(format: Self.stereo, capacity: 100) == true)
+        #expect(recorder.start(format: Self.stereo, capacity: 100, onFull: {}) == true)
         #expect(recorder.stop() == nil)
+    }
+
+    @Test func appendReturnsOnFullOnceWhenTheClipFills() {
+        let recorder = ClipRecorder()
+        var fullCount = 0
+        #expect(recorder.start(format: Self.stereo, capacity: 100, onFull: { fullCount += 1 }) == true)
+
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 60, base: 0)) == nil)
+        let onFull = recorder.append(Self.buffer(Self.stereo, frames: 60, base: 0))
+        #expect(onFull != nil)
+        #expect(fullCount == 0)
+        onFull?()
+        #expect(fullCount == 1)
+
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 60, base: 0)) == nil)
+        #expect(recorder.stop()?.frameLength == 100)
+
+        var secondCount = 0
+        #expect(recorder.start(format: Self.stereo, capacity: 10, onFull: { secondCount += 1 }) == true)
+        recorder.append(Self.buffer(Self.stereo, frames: 10, base: 0))?()
+        #expect(fullCount == 1)
+        #expect(secondCount == 1)
+    }
+
+    @Test func stopReleasesAnUnfiredOnFull() {
+        final class Probe {}
+        let recorder = ClipRecorder()
+        weak var probe: Probe?
+        do {
+            let captured = Probe()
+            probe = captured
+            #expect(recorder.start(format: Self.stereo, capacity: 100, onFull: { _ = captured }) == true)
+        }
+        #expect(recorder.append(Self.buffer(Self.stereo, frames: 60, base: 0)) == nil)
+        #expect(probe != nil)
+
+        _ = recorder.stop()
+
+        #expect(probe == nil)
     }
 }

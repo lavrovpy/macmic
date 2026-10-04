@@ -7,6 +7,7 @@
 // See LICENSE for the full license text.
 
 import CoreAudio
+import Foundation
 
 /// Which of the QuadCast S's two Core Audio devices a control belongs to:
 /// `.input` is the microphone (gain + mic mute), `.output` is the
@@ -36,6 +37,10 @@ public struct AudioLevel: Equatable, Sendable {
 public struct AudioDeviceSnapshot: Equatable, Sendable {
     public var input: AudioLevel?
     public var output: AudioLevel?
+    /// The HAL device behind each direction whose level was read in this
+    /// snapshot (set by `CoreAudioDeviceControl` and the test mock; empty
+    /// when built with the public init). Reassigned on every re-enumeration.
+    var deviceIDs: [AudioDirection: AudioObjectID] = [:]
 
     /// No QuadCast audio device present in either direction.
     public static let unavailable = AudioDeviceSnapshot(input: nil, output: nil)
@@ -43,6 +48,28 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
     public init(input: AudioLevel?, output: AudioLevel?) {
         self.input = input
         self.output = output
+    }
+
+    init(input: AudioLevel?, output: AudioLevel?, deviceIDs: [AudioDirection: AudioObjectID]) {
+        self.input = input
+        self.output = output
+        self.deviceIDs = deviceIDs
+    }
+
+    /// Levels only — the app's view. QuadcastKit code that must see
+    /// re-enumerations uses `isIdentical(to:)`.
+    ///
+    /// Stored properties are listed by hand; `isIdentical(to:)` is this plus
+    /// `deviceIDs`. Add a new level/state property here (`isIdentical` then
+    /// covers it); add a new identity property to `isIdentical` only — never
+    /// here, or id-only re-enumerations start publishing in the app.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.input == rhs.input && lhs.output == rhs.output
+    }
+
+    /// Levels and device ids.
+    func isIdentical(to other: Self) -> Bool {
+        self == other && deviceIDs == other.deviceIDs
     }
 
     public var isAvailable: Bool {
@@ -65,9 +92,32 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
     }
 }
 
+/// Ends one `observe` registration. Idempotent; also on deinit. A delivery
+/// in progress skips a cancelled handler.
+public final class AudioDeviceObservation {
+    private let lock = NSLock()
+    private var cancelAction: (() -> Void)?
+
+    init(cancel: @escaping () -> Void) {
+        cancelAction = cancel
+    }
+
+    deinit {
+        cancel()
+    }
+
+    public func cancel() {
+        lock.lock()
+        let action = cancelAction
+        cancelAction = nil
+        lock.unlock()
+        action?()
+    }
+}
+
 /// Abstraction over the QuadCast S's Core Audio volume/mute controls (the
-/// same properties macOS Sound settings drive), so `AppState` and the CLI
-/// can be tested without real hardware. `CoreAudioDeviceControl` is the
+/// same properties macOS Sound settings drive), so the app and the CLI can
+/// be tested without real hardware. `CoreAudioDeviceControl` is the
 /// production adapter; `MockAudioDeviceControl` (test target) is used in
 /// unit tests.
 ///
@@ -75,15 +125,22 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
 /// audio side is a different USB function with its own hotplug lifecycle,
 /// so a caller must track both separately.
 public protocol AudioDeviceControl: AnyObject {
-    /// Invoked on the main thread with the full current state whenever
-    /// anything changes: a QuadCast audio device appearing or disappearing,
-    /// an external volume/mute change (the mic's gain knob, Sound settings,
-    /// another app), and the echo of this object's own `set*` calls. The
-    /// first delivery after `open()` reports whatever is already present —
-    /// asynchronously, so `open()` returning says nothing about presence.
-    var onStateChanged: ((AudioDeviceSnapshot) -> Void)? { get set }
+    /// Registers `handler` for every delivery, in registration order, on the
+    /// main queue. A delivery is the latest snapshot whenever levels, mute,
+    /// presence or a tracked device id changed since the previous delivery:
+    /// a QuadCast device appearing/disappearing, a re-enumeration under new
+    /// ids even with identical levels, an external change, the echo of this
+    /// object's own writes. Every successful write is followed by a delivery
+    /// even if its value equals the previous one (another process may have
+    /// reverted the write first). Bursts may coalesce; a delivery never
+    /// predates a `snapshot` read made earlier on main. No replay on
+    /// registration. The first delivery after `open()` arrives even when
+    /// nothing is present; nothing is delivered after `close()`. Callable
+    /// from any thread.
+    func observe(_ handler: @escaping (AudioDeviceSnapshot) -> Void) -> AudioDeviceObservation
 
-    /// The most recently observed state; `.unavailable` before `open()`.
+    /// Current state (may be ahead of the last delivery); `.unavailable`
+    /// before `open()` and after `close()`.
     var snapshot: AudioDeviceSnapshot { get }
 
     /// Starts watching the Core Audio device list and any matched device's
@@ -97,12 +154,46 @@ public protocol AudioDeviceControl: AnyObject {
     func setVolume(_ scalar: Float, for direction: AudioDirection) throws
     /// Sets the master mute of one direction.
     func setMuted(_ muted: Bool, for direction: AudioDirection) throws
+}
 
-    /// The Core Audio object serving one direction, for handing to a
-    /// `MicrophoneMonitor`; `nil` while that device is absent. Ids are
-    /// reassigned on every re-enumeration, so callers must not cache one
-    /// across a `snapshot` change that drops the direction.
-    func deviceID(for direction: AudioDirection) -> AudioObjectID?
+/// The observer table both implementations share. NSLock-protected;
+/// `notify` calls handlers outside the lock.
+final class AudioObservers {
+    private struct Entry {
+        let id: Int
+        let handler: (AudioDeviceSnapshot) -> Void
+    }
+
+    private let lock = NSLock()
+    private var entries: [Entry] = []
+    private var nextID = 0
+
+    func add(_ handler: @escaping (AudioDeviceSnapshot) -> Void) -> AudioDeviceObservation {
+        lock.lock()
+        nextID += 1
+        let id = nextID
+        entries.append(Entry(id: id, handler: handler))
+        lock.unlock()
+        return AudioDeviceObservation { [weak self] in self?.remove(id) }
+    }
+
+    func notify(_ snapshot: AudioDeviceSnapshot) {
+        lock.lock()
+        let ids = entries.map(\.id)
+        lock.unlock()
+        for id in ids {
+            lock.lock()
+            let handler = entries.first { $0.id == id }?.handler
+            lock.unlock()
+            handler?(snapshot)
+        }
+    }
+
+    private func remove(_ id: Int) {
+        lock.lock()
+        entries.removeAll { $0.id == id }
+        lock.unlock()
+    }
 }
 
 /// Errors surfaced by `AudioDeviceControl` implementations.

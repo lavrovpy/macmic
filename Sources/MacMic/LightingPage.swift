@@ -13,15 +13,15 @@ import SwiftUI
 /// Color editing is inline (`InlineColorEditor`) rather than `ColorPicker`
 /// so no floating Colors panel ever opens next to the window.
 struct LightingPage: View {
-    @ObservedObject var state: AppState
-    /// Which blink color the inline editor is editing. Clamped on read so a
-    /// removal never leaves it pointing past the end.
+    @ObservedObject var lighting: Lighting
+    /// Which blink color the inline editor is editing; read through
+    /// `blinkIndex(clamping:)`, so it may point past the end.
     @State private var selectedBlinkIndex = 0
 
     var body: some View {
         Form {
             Section {
-                Picker("Mode", selection: $state.modeKind) {
+                Picker("Mode", selection: $lighting.settings.modeKind) {
                     ForEach(LightModeKind.allCases) { kind in
                         Text(kind.title).tag(kind)
                     }
@@ -30,10 +30,10 @@ struct LightingPage: View {
                 .labelsHidden()
             }
 
-            switch state.modeKind {
+            switch lighting.settings.modeKind {
             case .solid:
                 Section("Color") {
-                    InlineColorEditor(color: $state.solidRGB)
+                    InlineColorEditor(color: $lighting.settings.solidColor)
                 }
             case .cycle:
                 Section("Speed") {
@@ -42,7 +42,7 @@ struct LightingPage: View {
             case .blink:
                 Section("Colors") {
                     blinkSwatchStrip
-                    InlineColorEditor(color: blinkColorBinding(at: clampedBlinkIndex))
+                    InlineColorEditor(color: blinkColorBinding(at: selectedIndex))
                 }
                 Section("Speed") {
                     speedSlider
@@ -50,7 +50,7 @@ struct LightingPage: View {
             }
 
             Section("Brightness") {
-                Slider(value: $state.brightness, in: 0...1) {
+                Slider(value: $lighting.settings.brightness, in: 0...1) {
                     EmptyView()
                 } minimumValueLabel: {
                     Image(systemName: "sun.min")
@@ -58,11 +58,11 @@ struct LightingPage: View {
                     Image(systemName: "sun.max")
                 }
                 .accessibilityLabel("Brightness")
-                .accessibilityValue("\(Int((state.brightness * 100).rounded())) percent")
+                .accessibilityValue("\(Int((lighting.settings.brightness * 100).rounded())) percent")
             }
         }
         .formStyle(.grouped)
-        .disabled(!state.controlsEnabled)
+        .disabled(!lighting.controlsEnabled)
     }
 
     private var speedSlider: some View {
@@ -74,31 +74,31 @@ struct LightingPage: View {
             Image(systemName: "hare")
         }
         .accessibilityLabel("Speed")
-        .accessibilityValue("\(state.presetSpeed) of \(AppState.presetSpeedRange.upperBound)")
+        .accessibilityValue("\(lighting.settings.presetSpeed) of \(LightingSettings.presetSpeedRange.upperBound)")
     }
 
     private var presetSpeedBounds: ClosedRange<Double> {
-        Double(AppState.presetSpeedRange.lowerBound)...Double(AppState.presetSpeedRange.upperBound)
+        Double(LightingSettings.presetSpeedRange.lowerBound)...Double(LightingSettings.presetSpeedRange.upperBound)
     }
 
     /// `Slider` needs a floating-point binding; the model stores an `Int`.
     private var presetSpeedBinding: Binding<Double> {
         Binding(
-            get: { Double(state.presetSpeed) },
-            set: { state.presetSpeed = Int($0.rounded()) }
+            get: { Double(lighting.settings.presetSpeed) },
+            set: { lighting.settings.presetSpeed = Int($0.rounded()) }
         )
     }
 
     // MARK: Blink colors
 
-    private var clampedBlinkIndex: Int {
-        min(selectedBlinkIndex, max(state.blinkColors.count - 1, 0))
+    private var selectedIndex: Int {
+        lighting.settings.blinkIndex(clamping: selectedBlinkIndex)
     }
 
     private var blinkSwatchStrip: some View {
         HStack(spacing: 8) {
-            ForEach(Array(state.blinkColors.enumerated()), id: \.offset) { index, rgb in
-                ColorSwatch(color: rgb, isSelected: index == clampedBlinkIndex) {
+            ForEach(Array(lighting.settings.blinkColors.enumerated()), id: \.offset) { index, rgb in
+                ColorSwatch(color: rgb, isSelected: index == selectedIndex) {
                     selectedBlinkIndex = index
                 }
                 .accessibilityLabel("Blink color \(index + 1)")
@@ -106,20 +106,16 @@ struct LightingPage: View {
             }
             Spacer()
             Button {
-                var colors = state.blinkColors
-                colors.remove(at: clampedBlinkIndex)
-                state.blinkColors = colors
-                selectedBlinkIndex = min(clampedBlinkIndex, colors.count - 1)
+                if let next = lighting.settings.removeBlinkColor(at: selectedIndex) {
+                    selectedBlinkIndex = next
+                }
             } label: {
                 Image(systemName: "minus")
             }
-            .disabled(state.blinkColors.count == 1)
+            .disabled(!lighting.settings.canRemoveBlinkColor)
             .accessibilityLabel("Remove selected blink color")
             Button {
-                var colors = state.blinkColors
-                colors.append(colors[clampedBlinkIndex])
-                state.blinkColors = colors
-                selectedBlinkIndex = colors.count - 1
+                selectedBlinkIndex = lighting.settings.duplicateBlinkColor(at: selectedIndex)
             } label: {
                 Image(systemName: "plus")
             }
@@ -129,16 +125,8 @@ struct LightingPage: View {
 
     private func blinkColorBinding(at index: Int) -> Binding<QuadcastKit.RGBColor> {
         Binding(
-            get: {
-                let colors = state.blinkColors
-                return index < colors.count ? colors[index] : state.lastSolidColor
-            },
-            set: { newColor in
-                var colors = state.blinkColors
-                guard index < colors.count else { return }
-                colors[index] = newColor
-                state.blinkColors = colors
-            }
+            get: { lighting.settings.blinkColors[lighting.settings.blinkIndex(clamping: index)] },
+            set: { lighting.settings.setBlinkColor($0, at: index) }
         )
     }
 }

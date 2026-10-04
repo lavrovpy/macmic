@@ -24,10 +24,11 @@ import Foundation
 /// main element 0, which this device doesn't expose for volume; mute is on
 /// element 0 only. Every write sets all channels to the same value and every
 /// read takes channel 1.
+///
+/// Internal state is confined to a private serial queue, where the HAL
+/// listeners also run. Observers run on `callbackQueue` (`.main` in
+/// production).
 public final class CoreAudioDeviceControl: AudioDeviceControl {
-    public var onStateChanged: ((AudioDeviceSnapshot) -> Void)?
-    public var snapshot: AudioDeviceSnapshot { queue.sync { cached } }
-
     static let usbVendorID = 0x0951
     static let usbProductID = 0x171d
     static let modelUIDSuffix = ":0951:171d"
@@ -35,7 +36,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     /// One HAL device's identity and per-scope channel counts, as read by
     /// `rescanDevices` before `assignDirections` decides whether it's ours.
-    struct EnumeratedDevice: Equatable {
+    private struct EnumeratedDevice {
         let id: AudioObjectID
         let modelUID: String?
         let name: String?
@@ -45,58 +46,69 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     /// The device serving one `AudioDirection`; `channelCount` is that
     /// direction's scope only, since volume is written per channel.
-    struct TrackedDevice: Equatable {
+    private struct TrackedDevice {
         let id: AudioObjectID
         let channelCount: Int
     }
 
     /// Per-device listeners to drop and to register after a rescan, keyed by
     /// the direction they observe (the mute/volume addresses are scoped).
-    struct ListenerDiff: Equatable {
+    private struct ListenerDiff {
         var remove: [AudioDirection: TrackedDevice]
         var add: [AudioDirection: TrackedDevice]
     }
 
-    /// `AudioObjectRemovePropertyListenerBlock` only removes the identical
-    /// block object that was added, so every registration keeps its block.
-    /// `direction` is `nil` for the system object's device-list listener.
-    private struct ListenerRegistration {
-        let objectID: AudioObjectID
-        let direction: AudioDirection?
-        var address: AudioObjectPropertyAddress
-        let block: AudioObjectPropertyListenerBlock
-    }
-
+    private let hal: HALPort
+    private let callbackQueue: DispatchQueue
     private let queue = DispatchQueue(label: "dev.alavreniuk.macmic.coreaudio-control")
+    private let observers = AudioObservers()
+
+    // Confined to `queue`.
     private var tracked: [AudioDirection: TrackedDevice] = [:]
-    private var registrations: [ListenerRegistration] = []
+    private var listeners: [AudioDirection: [HALListener]] = [:]
+    private var deviceListListener: HALListener?
     private var cached: AudioDeviceSnapshot = .unavailable
+    private var lastDelivered: AudioDeviceSnapshot?
     private var isOpen = false
 
-    public init() {}
+    public convenience init() {
+        self.init(hal: SystemHAL(), callbackQueue: .main)
+    }
+
+    /// `callbackQueue` must be serial. Tests pass a private one.
+    init(hal: HALPort, callbackQueue: DispatchQueue) {
+        self.hal = hal
+        self.callbackQueue = callbackQueue
+    }
+
+    public func observe(_ handler: @escaping (AudioDeviceSnapshot) -> Void) -> AudioDeviceObservation {
+        observers.add(handler)
+    }
+
+    public var snapshot: AudioDeviceSnapshot {
+        queue.sync { cached }
+    }
 
     /// Registers the device-list listener and scans synchronously, so
-    /// `snapshot` is valid when this returns; the initial `onStateChanged`
-    /// delivery is still asynchronous (main queue), and happens even when
-    /// nothing is present. A second call while open is a no-op.
+    /// `snapshot` is valid when this returns; the first delivery is still
+    /// asynchronous. A second call while open is a no-op.
     public func open() throws {
         try queue.sync {
             guard !isOpen else { return }
-            let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-                self?.handleDeviceListChanged()
+            do {
+                deviceListListener = try hal.addListener(
+                    HAL.systemObject, HAL.address(kAudioHardwarePropertyDevices), queue: queue
+                ) { [weak self] in
+                    self?.handleDeviceListChanged()
+                }
+            } catch let error as HALStatusError {
+                throw AudioDeviceControlError.openFailed(error.status)
             }
-            var address = HAL.address(kAudioHardwarePropertyDevices)
-            let status = AudioObjectAddPropertyListenerBlock(HAL.systemObject, &address, queue, block)
-            guard status == noErr else {
-                throw AudioDeviceControlError.openFailed(status)
-            }
-            registrations.append(ListenerRegistration(
-                objectID: HAL.systemObject, direction: nil, address: address, block: block
-            ))
             isOpen = true
+            lastDelivered = nil
             rescanDevices()
             cached = readSnapshot()
-            deliver(cached)
+            scheduleDelivery()
         }
     }
 
@@ -104,18 +116,17 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// so a listener block that is already queued can't be waited on from
     /// the queue it needs; such a block finds `isOpen == false` and returns.
     public func close() {
-        let toRemove: [ListenerRegistration] = queue.sync {
-            let registrations = self.registrations
-            self.registrations.removeAll()
+        let toRemove: [HALListener] = queue.sync {
+            let removed = [deviceListListener].compactMap { $0 } + listeners.values.flatMap { $0 }
+            deviceListListener = nil
+            listeners.removeAll()
             tracked.removeAll()
             cached = .unavailable
+            lastDelivered = nil
             isOpen = false
-            return registrations
+            return removed
         }
-        for registration in toRemove {
-            var address = registration.address
-            AudioObjectRemovePropertyListenerBlock(registration.objectID, &address, queue, registration.block)
-        }
+        toRemove.forEach(hal.removeListener)
     }
 
     public func setVolume(_ scalar: Float, for direction: AudioDirection) throws {
@@ -123,18 +134,19 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
             guard let device = tracked[direction] else {
                 throw AudioDeviceControlError.deviceNotFound(direction)
             }
-            var value = Float32(min(max(scalar, 0), 1))
+            let value = Float32(min(max(scalar, 0), 1))
+            var wroteAnyChannel = false
             // A failure on a later channel leaves earlier ones written, so the
             // snapshot must be re-read even when this throws.
-            defer { refreshSnapshot() }
+            defer {
+                if wroteAnyChannel { refreshAfterOwnWrite() }
+            }
             for element in 1...UInt32(max(device.channelCount, 1)) {
-                var address = Self.volumeScalarAddress(for: direction, element: element)
-                let status = AudioObjectSetPropertyData(
-                    device.id, &address, 0, nil, UInt32(MemoryLayout<Float32>.size), &value
-                )
+                let status = hal.write(value, device.id, Self.volumeScalarAddress(for: direction, element: element))
                 guard status == noErr else {
                     throw AudioDeviceControlError.setFailed(status)
                 }
+                wroteAnyChannel = true
             }
         }
     }
@@ -144,27 +156,19 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
             guard let device = tracked[direction] else {
                 throw AudioDeviceControlError.deviceNotFound(direction)
             }
-            var value: UInt32 = muted ? 1 : 0
-            var address = Self.muteAddress(for: direction)
-            let status = AudioObjectSetPropertyData(
-                device.id, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value
-            )
+            let status = hal.write(UInt32(muted ? 1 : 0), device.id, Self.muteAddress(for: direction))
             guard status == noErr else {
                 throw AudioDeviceControlError.setFailed(status)
             }
-            refreshSnapshot()
+            refreshAfterOwnWrite()
         }
     }
 
-    public func deviceID(for direction: AudioDirection) -> AudioObjectID? {
-        queue.sync { tracked[direction]?.id }
-    }
-
-    // MARK: - Pure helpers (unit-tested)
+    // MARK: - Direction assignment
 
     /// `true` for a ModelUID carrying the QuadCast S's USB vendor:product;
     /// the user-visible name is consulted only when no ModelUID is reported.
-    static func isQuadcast(modelUID: String?, name: String?) -> Bool {
+    private static func isQuadcast(modelUID: String?, name: String?) -> Bool {
         if let modelUID {
             return modelUID.lowercased().hasSuffix(modelUIDSuffix)
         }
@@ -172,7 +176,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     }
 
     /// Which directions a device serves, from its per-scope channel counts.
-    static func directions(inputChannels: Int, outputChannels: Int) -> [AudioDirection] {
+    private static func directions(inputChannels: Int, outputChannels: Int) -> [AudioDirection] {
         var result: [AudioDirection] = []
         if inputChannels > 0 { result.append(.input) }
         if outputChannels > 0 { result.append(.output) }
@@ -184,7 +188,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// direction it has channels for, and when two devices could serve the
     /// same direction the first enumerated wins (the HAL lists devices in a
     /// stable order, so this stays pinned across rescans).
-    static func assignDirections(_ devices: [EnumeratedDevice]) -> [AudioDirection: TrackedDevice] {
+    private static func assignDirections(_ devices: [EnumeratedDevice]) -> [AudioDirection: TrackedDevice] {
         var assigned: [AudioDirection: TrackedDevice] = [:]
         for device in devices where isQuadcast(modelUID: device.modelUID, name: device.name) {
             for direction in directions(inputChannels: device.inputChannels, outputChannels: device.outputChannels)
@@ -202,7 +206,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// serving the same direction is left alone, one that moved to another
     /// direction is re-registered under the new scope, and a `channelCount`
     /// change on its own is not a listener change.
-    static func listenerDiff(
+    private static func listenerDiff(
         previous: [AudioDirection: TrackedDevice],
         current: [AudioDirection: TrackedDevice]
     ) -> ListenerDiff {
@@ -216,7 +220,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
         return diff
     }
 
-    static func scope(for direction: AudioDirection) -> AudioObjectPropertyScope {
+    private static func scope(for direction: AudioDirection) -> AudioObjectPropertyScope {
         switch direction {
         case .input: return kAudioObjectPropertyScopeInput
         case .output: return kAudioObjectPropertyScopeOutput
@@ -253,83 +257,94 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// Re-enumerates the HAL's device list and brings the per-device
     /// listeners in line with `assignDirections`' result via `listenerDiff`.
     private func rescanDevices() {
-        let enumerated = HAL.allDeviceIDs().map { id in
+        let enumerated = hal.deviceIDs().map { id in
             EnumeratedDevice(
                 id: id,
-                modelUID: HAL.readString(id, kAudioDevicePropertyModelUID),
-                name: HAL.readString(id, kAudioObjectPropertyName),
-                inputChannels: HAL.channelCount(id, scope: kAudioObjectPropertyScopeInput),
-                outputChannels: HAL.channelCount(id, scope: kAudioObjectPropertyScopeOutput)
+                modelUID: hal.string(id, kAudioDevicePropertyModelUID),
+                name: hal.string(id, kAudioObjectPropertyName),
+                inputChannels: hal.channelCount(id, scope: kAudioObjectPropertyScopeInput),
+                outputChannels: hal.channelCount(id, scope: kAudioObjectPropertyScopeOutput)
             )
         }
         let assigned = Self.assignDirections(enumerated)
         let diff = Self.listenerDiff(previous: tracked, current: assigned)
-        for (direction, device) in diff.remove {
-            removeListeners(for: device.id, direction: direction)
+        for direction in diff.remove.keys {
+            listeners.removeValue(forKey: direction)?.forEach(hal.removeListener)
         }
         for (direction, device) in diff.add {
-            addListener(objectID: device.id, direction: direction, address: Self.muteAddress(for: direction))
-            addListener(
-                objectID: device.id, direction: direction,
-                address: Self.volumeScalarAddress(for: direction, element: 1)
-            )
+            let addresses = [Self.muteAddress(for: direction), Self.volumeScalarAddress(for: direction, element: 1)]
+            listeners[direction] = addresses.compactMap { address in
+                try? hal.addListener(device.id, address, queue: queue) { [weak self] in
+                    self?.handleDevicePropertyChanged()
+                }
+            }
         }
         tracked = assigned
     }
 
-    /// Re-reads every tracked direction and delivers the result only if it
-    /// differs from `cached` — which also swallows the HAL's echo of this
-    /// object's own writes.
+    /// Re-reads every tracked direction and schedules a delivery only if
+    /// levels or device ids changed — which also swallows the HAL's echo of
+    /// this object's own writes.
     private func refreshSnapshot() {
-        let snapshot = readSnapshot()
-        guard snapshot != cached else { return }
-        cached = snapshot
-        deliver(snapshot)
+        let current = readSnapshot()
+        guard !current.isIdentical(to: cached) else { return }
+        cached = current
+        scheduleDelivery()
     }
 
+    /// Re-reads after this object's own write and forces the next delivery
+    /// even if it equals the last one (the `observe` contract for writes).
+    /// Without the force, the dedup swallows a write another process reverted
+    /// before the delivery ran (A → B → A), leaving a caller that applied B
+    /// optimistically on B.
+    private func refreshAfterOwnWrite() {
+        cached = readSnapshot()
+        lastDelivered = nil
+        scheduleDelivery()
+    }
+
+    /// A direction gets a device id only when its mute and volume reads
+    /// succeeded.
     private func readSnapshot() -> AudioDeviceSnapshot {
-        AudioDeviceSnapshot(input: readLevel(.input), output: readLevel(.output))
+        var snapshot = AudioDeviceSnapshot.unavailable
+        for direction in AudioDirection.allCases {
+            guard let device = tracked[direction], let level = readLevel(device, direction) else { continue }
+            snapshot[direction] = level
+            snapshot.deviceIDs[direction] = device.id
+        }
+        return snapshot
     }
 
     /// A failed mute/volume read is how a just-unplugged device shows up
     /// before the device-list notification lands, so it means "absent"
     /// rather than an error.
-    private func readLevel(_ direction: AudioDirection) -> AudioLevel? {
-        guard let device = tracked[direction],
-              let mute = HAL.readUInt32(device.id, Self.muteAddress(for: direction)),
-              let volume = HAL.readFloat32(device.id, Self.volumeScalarAddress(for: direction, element: 1)) else {
+    private func readLevel(_ device: TrackedDevice, _ direction: AudioDirection) -> AudioLevel? {
+        guard let mute = hal.uint32(device.id, Self.muteAddress(for: direction)),
+              let volume = hal.float32(device.id, Self.volumeScalarAddress(for: direction, element: 1)) else {
             return nil
         }
-        let decibels = HAL.readFloat32(device.id, Self.volumeDecibelsAddress(for: direction))
+        let decibels = hal.float32(device.id, Self.volumeDecibelsAddress(for: direction))
         return AudioLevel(volume: volume, isMuted: mute != 0, decibels: decibels)
     }
 
-    private func addListener(objectID: AudioObjectID, direction: AudioDirection, address: AudioObjectPropertyAddress) {
-        let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
-            self?.handleDevicePropertyChanged()
-        }
-        var address = address
-        guard AudioObjectAddPropertyListenerBlock(objectID, &address, queue, block) == noErr else { return }
-        registrations.append(ListenerRegistration(
-            objectID: objectID, direction: direction, address: address, block: block
-        ))
+    private func scheduleDelivery() {
+        callbackQueue.async { [weak self] in self?.deliverLatest() }
     }
 
-    /// Removing a listener from an object the HAL has already destroyed
-    /// fails harmlessly, so an unplugged device's registrations are dropped
-    /// the same way as a live one's.
-    private func removeListeners(for objectID: AudioObjectID, direction: AudioDirection) {
-        let matches: (ListenerRegistration) -> Bool = {
-            $0.objectID == objectID && $0.direction == direction
-        }
-        for registration in registrations where matches(registration) {
-            var address = registration.address
-            AudioObjectRemovePropertyListenerBlock(objectID, &address, queue, registration.block)
-        }
-        registrations.removeAll(where: matches)
-    }
+    // MARK: - Delivery (on `callbackQueue`)
 
-    private func deliver(_ snapshot: AudioDeviceSnapshot) {
-        DispatchQueue.main.async { self.onStateChanged?(snapshot) }
+    /// Delivers whatever `cached` holds now, not a value captured when the
+    /// delivery was scheduled: that is what keeps a delivery from predating
+    /// a `snapshot` read made on main in between. Capturing the value at
+    /// schedule time would break it.
+    private func deliverLatest() {
+        let latest: AudioDeviceSnapshot? = queue.sync {
+            guard isOpen, !(lastDelivered.map { cached.isIdentical(to: $0) } ?? false) else { return nil }
+            lastDelivered = cached
+            return cached
+        }
+        if let latest {
+            observers.notify(latest)
+        }
     }
 }

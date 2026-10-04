@@ -11,44 +11,71 @@ import CoreAudio
 
 /// In-memory `AudioDeviceControl` for unit tests: records every write in
 /// order, lets a test script the next `open`/set to fail, and simulates
-/// hotplug and external changes — all callbacks fire synchronously so tests
-/// need no waiting.
+/// hotplug, external changes and re-enumeration. Observers are called
+/// synchronously on the caller's thread, so tests need no waiting. Not
+/// thread-safe.
 final class MockAudioDeviceControl: AudioDeviceControl {
     enum Write: Equatable {
         case volume(Float, AudioDirection)
         case muted(Bool, AudioDirection)
     }
 
-    var onStateChanged: ((AudioDeviceSnapshot) -> Void)?
-    private(set) var snapshot: AudioDeviceSnapshot = .unavailable
+    /// The ids attached to present directions until `simulateReenumeration`.
+    static let inputDeviceID: AudioObjectID = 4100
+    static let outputDeviceID: AudioObjectID = 4101
+
+    private(set) var inputID = MockAudioDeviceControl.inputDeviceID
+    private(set) var outputID = MockAudioDeviceControl.outputDeviceID
     private(set) var isOpen = false
     private(set) var writes: [Write] = []
+    /// How many `observe` calls preceded the last successful `open()`.
+    private(set) var registrationsAtOpen: Int?
 
     /// Consumed (set back to `nil`) the next time `open()` is called.
     var nextOpenError: AudioDeviceControlError?
     /// Consumed (set back to `nil`) the next time `setVolume`/`setMuted` is called.
     var nextSetError: AudioDeviceControlError?
-    /// Delivered via `onStateChanged` when `open()` succeeds. `nil` models
+    /// What the device reports when `open()` succeeds. `nil` models
     /// launching with no mic plugged in (delivers `.unavailable`).
     var stateAtOpen: AudioDeviceSnapshot? = .sample
-    /// Whether a successful write fires `onStateChanged` with the written
-    /// value, like the HAL's listener echo. Set `false` to test the
-    /// optimistic path in isolation.
+    /// Whether a successful write is delivered with the written value, like
+    /// the HAL's listener echo. Set `false` to test the optimistic path in
+    /// isolation.
     var echoesWrites = true
+
+    private let observers = AudioObservers()
+    /// The levels the device holds, open or not; ids are attached on read.
+    private var levels: AudioDeviceSnapshot = .unavailable
+    private var lastFreshID: AudioObjectID = 5000
+    private var registrations = 0
+
+    var snapshot: AudioDeviceSnapshot {
+        guard isOpen else { return .unavailable }
+        var result = AudioDeviceSnapshot(input: levels.input, output: levels.output)
+        if result.input != nil { result.deviceIDs[.input] = inputID }
+        if result.output != nil { result.deviceIDs[.output] = outputID }
+        return result
+    }
+
+    func observe(_ handler: @escaping (AudioDeviceSnapshot) -> Void) -> AudioDeviceObservation {
+        registrations += 1
+        return observers.add(handler)
+    }
 
     func open() throws {
         if let error = nextOpenError {
             nextOpenError = nil
             throw error
         }
+        guard !isOpen else { return }
         isOpen = true
-        snapshot = stateAtOpen ?? .unavailable
-        onStateChanged?(snapshot)
+        registrationsAtOpen = registrations
+        levels = stateAtOpen ?? .unavailable
+        observers.notify(snapshot)
     }
 
     func close() {
         isOpen = false
-        snapshot = .unavailable
     }
 
     /// Records the raw, unclamped value: clamping is the caller's contract
@@ -56,41 +83,31 @@ final class MockAudioDeviceControl: AudioDeviceControl {
     func setVolume(_ scalar: Float, for direction: AudioDirection) throws {
         try checkWritable(direction)
         writes.append(.volume(scalar, direction))
-        snapshot[direction]?.volume = scalar
+        levels[direction]?.volume = scalar
         if echoesWrites {
-            onStateChanged?(snapshot)
+            observers.notify(snapshot)
         }
     }
 
     func setMuted(_ muted: Bool, for direction: AudioDirection) throws {
         try checkWritable(direction)
         writes.append(.muted(muted, direction))
-        snapshot[direction]?.isMuted = muted
+        levels[direction]?.isMuted = muted
         if echoesWrites {
-            onStateChanged?(snapshot)
+            observers.notify(snapshot)
         }
     }
 
-    /// Fixed fake ids so a test can assert which device a
-    /// `MicrophoneMonitor` was started on.
-    static let inputDeviceID: AudioObjectID = 4100
-    static let outputDeviceID: AudioObjectID = 4101
-
-    func deviceID(for direction: AudioDirection) -> AudioObjectID? {
-        guard snapshot[direction] != nil else { return nil }
-        return direction == .input ? Self.inputDeviceID : Self.outputDeviceID
-    }
-
-    /// Simulates a QuadCast audio device appearing with these values.
+    /// Simulates a QuadCast audio device appearing with these levels.
     func simulateDeviceAppeared(_ snapshot: AudioDeviceSnapshot) {
-        self.snapshot = snapshot
-        onStateChanged?(snapshot)
+        levels = AudioDeviceSnapshot(input: snapshot.input, output: snapshot.output)
+        deliverIfOpen()
     }
 
     /// Simulates every QuadCast audio device disappearing.
     func simulateDeviceRemoved() {
-        snapshot = .unavailable
-        onStateChanged?(snapshot)
+        levels = .unavailable
+        deliverIfOpen()
     }
 
     /// Simulates an external change (the gain knob, Sound settings, another
@@ -99,12 +116,30 @@ final class MockAudioDeviceControl: AudioDeviceControl {
         simulateDeviceAppeared(snapshot)
     }
 
+    /// A re-enumeration reassigns every id: each direction takes the given
+    /// one, or a fresh one. Delivers the same levels under the new ids.
+    func simulateReenumeration(inputID: AudioObjectID? = nil, outputID: AudioObjectID? = nil) {
+        self.inputID = inputID ?? freshID()
+        self.outputID = outputID ?? freshID()
+        deliverIfOpen()
+    }
+
+    private func freshID() -> AudioObjectID {
+        lastFreshID += 1
+        return lastFreshID
+    }
+
+    private func deliverIfOpen() {
+        guard isOpen else { return }
+        observers.notify(snapshot)
+    }
+
     private func checkWritable(_ direction: AudioDirection) throws {
         if let error = nextSetError {
             nextSetError = nil
             throw error
         }
-        guard isOpen, snapshot[direction] != nil else {
+        guard snapshot[direction] != nil else {
             throw AudioDeviceControlError.deviceNotFound(direction)
         }
     }

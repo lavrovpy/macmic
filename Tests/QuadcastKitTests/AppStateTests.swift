@@ -13,241 +13,136 @@ import Testing
 @testable import MacMic
 @testable import QuadcastKit
 
-@Suite struct AppStateTests {
-    /// A very long interval so the real `DispatchSourceTimer` never fires
-    /// during these tests; `state.streamer.tick()` drives ticks
-    /// deterministically instead (same pattern as `FrameStreamerTests`).
-    private static let dormantInterval: DispatchTimeInterval = .seconds(3600)
+/// How `AppState` composes its concerns: the audio control's lifecycle,
+/// sleep/wake fan-out, teardown, and the independence of the lighting and
+/// audio hotplug lifecycles. Each concern's own behaviour is tested against
+/// its own fixture.
+@Suite @MainActor struct AppStateTests {
+    private static let speakers = MicrophoneTestPhase.running(outputDeviceName: "MacBook Pro Speakers")
 
-    /// A `UserDefaults` suite unique to each test so runs never see another
-    /// test's persisted state.
-    private static func freshDefaults(name: String = #function) -> UserDefaults {
-        let suiteName = "dev.alavreniuk.macmic.tests.\(name).\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        defaults.removePersistentDomain(forName: suiteName)
-        return defaults
+    @Test func audioControlIsOpenedAfterObserversAreRegistered() {
+        let fixture = AppStateFixture()
+        let app = fixture.state
+
+        #expect(fixture.audioControl.registrationsAtOpen == 2)
+        #expect(app.audio.snapshot == .sample)
+        #expect(app.microphoneTest.controlsEnabled)
     }
 
-    private func makeState(
-        transport: HIDTransport,
-        audioControl: AudioDeviceControl = MockAudioDeviceControl(),
-        defaults: UserDefaults? = nil,
-        notificationCenter: NotificationCenter = NotificationCenter()
-    ) -> AppState {
-        AppState(
-            transport: transport,
-            audioControl: audioControl,
-            microphoneMonitor: MockMicrophoneMonitor(),
-            defaults: defaults ?? Self.freshDefaults(),
-            notificationCenter: notificationCenter,
-            streamerInterval: Self.dormantInterval
-        )
+    @Test func audioOpenFailureLeavesAudioUnavailable() {
+        let audioControl = MockAudioDeviceControl()
+        audioControl.nextOpenError = .openFailed(-1)
+        let fixture = AppStateFixture(audioControl: audioControl)
+        let app = fixture.state
+
+        #expect(app.audio.snapshot == .unavailable)
+        #expect(app.audio.micControlsEnabled == false)
+        #expect(app.audio.monitorControlsEnabled == false)
+        #expect(app.microphoneTest.controlsEnabled == false)
+        #expect(app.lighting.status == .connected)
     }
 
-    @Test func modeChangeReachesTheMockTransport() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
-        let red = RGBColor(r: 0xFF, g: 0, b: 0)
+    @Test func sleepStopsLightingAndTheMicrophoneTestAndWakeResumesOnlyLighting() {
+        let fixture = AppStateFixture()
+        let test = fixture.state.microphoneTest
+        test.toggleTest()
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval)
+        let attemptsBeforeSleep = fixture.transport.sendAttempts
+        #expect(attemptsBeforeSleep == 2)
+        #expect(test.status.phase == Self.speakers)
 
-        state.mode = .solid(red)
-        state.streamer.tick()
+        fixture.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
+        #expect(test.status.phase == .stopped)
+        #expect(fixture.engine.isRunning == false)
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval * 3)
+        #expect(fixture.transport.sendAttempts == attemptsBeforeSleep)
 
-        #expect(transport.sentReports.last == Frame(color: red).dataPacket())
+        fixture.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval)
+        #expect(fixture.transport.sendAttempts == attemptsBeforeSleep + 2)
+        #expect(test.status.phase == .stopped)
+        #expect(fixture.engine.count(of: .start(input: MockAudioDeviceControl.inputDeviceID)) == 1)
     }
 
-    @Test func disablingStopsStreamingAndReEnablingResumes() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
-        state.mode = .solid(RGBColor(r: 1, g: 2, b: 3))
+    @Test func deinitStopsTheTestAndClosesAudioControlAndTransport() {
+        let fixture = AppStateFixture()
+        fixture.state.microphoneTest.toggleTest()
+        #expect(fixture.engine.isRunning)
+        #expect(fixture.audioControl.isOpen)
+        #expect(fixture.transport.isOpen)
 
-        state.isEnabled = false
-        state.streamer.tick() // no-op: stopped
-        let countAfterDisable = transport.sentReports.count
+        fixture.releaseState()
 
-        state.isEnabled = true
-        state.streamer.tick()
-
-        #expect(transport.sentReports.count > countAfterDisable)
+        #expect(fixture.engine.isRunning == false)
+        #expect(fixture.engine.calls.suffix(2) == [.stop, .discardClip])
+        #expect(fixture.audioControl.isOpen == false)
+        #expect(fixture.transport.isOpen == false)
+        let attempts = fixture.transport.sendAttempts
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval * 3)
+        #expect(fixture.transport.sendAttempts == attempts)
     }
 
-    @Test func persistenceRoundTripsLightMode() throws {
-        let defaults = Self.freshDefaults()
-        let blink = LightMode.blink(colors: [RGBColor(r: 10, g: 20, b: 30), RGBColor(r: 40, g: 50, b: 60)], speed: 42)
+    @Test func lightingAndAudioPresenceAreIndependent() {
+        let fixture = AppStateFixture()
+        let app = fixture.state
+        app.microphoneTest.toggleTest()
+        #expect(app.lighting.isDevicePresent)
+        #expect(app.audio.micControlsEnabled)
 
-        let first = makeState(transport: MockHIDTransport(), defaults: defaults)
-        first.mode = blink
-        first.brightness = 0.5
-        first.isEnabled = false
+        fixture.transport.simulateUnplug()
+        #expect(app.lighting.isDevicePresent == false)
+        #expect(app.lighting.controlsEnabled == false)
+        #expect(app.audio.micControlsEnabled)
+        #expect(app.audio.monitorControlsEnabled)
+        #expect(app.microphoneTest.status.phase == Self.speakers)
+        #expect(app.microphoneTest.controlsEnabled)
+        #expect(fixture.engine.isRunning)
 
-        let second = makeState(transport: MockHIDTransport(), defaults: defaults)
-
-        #expect(second.mode == blink)
-        #expect(second.brightness == 0.5)
-        #expect(second.isEnabled == false)
+        app.microphoneTest.toggleTest()
+        fixture.transport.simulateConnect()
+        fixture.audioControl.simulateDeviceRemoved()
+        #expect(app.lighting.isDevicePresent)
+        #expect(app.lighting.controlsEnabled)
+        #expect(app.audio.micControlsEnabled == false)
+        #expect(app.audio.monitorControlsEnabled == false)
     }
 
-    /// Regression test: `lastSolidColor` must survive a relaunch even while a
-    /// preset (`.cycle`/`.blink`) is the active mode, not just an in-memory
-    /// session — otherwise the color picker resets to white on next launch.
-    @Test func lastSolidColorSurvivesRelaunchWhilePresetIsActive() throws {
-        let defaults = Self.freshDefaults()
-        let color = RGBColor(r: 0xAA, g: 0xBB, b: 0xCC)
+    @Test func micRemovalFailsTheTestWithoutTouchingLighting() {
+        let fixture = AppStateFixture()
+        let app = fixture.state
+        app.microphoneTest.toggleTest()
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval)
+        let attempts = fixture.transport.sendAttempts
 
-        let first = makeState(transport: MockHIDTransport(), defaults: defaults)
-        first.mode = .solid(color)
-        first.mode = .cycle(speed: 50)
+        fixture.audioControl.simulateDeviceRemoved()
 
-        let second = makeState(transport: MockHIDTransport(), defaults: defaults)
-
-        #expect(second.mode == .cycle(speed: 50))
-        #expect(second.lastSolidColor == color)
+        #expect(app.microphoneTest.status.phase == .failed(.inputDeviceUnavailable))
+        #expect(fixture.engine.isRunning == false)
+        #expect(app.audio.isAvailable == false)
+        #expect(app.lighting.status == .connected)
+        #expect(app.lighting.controlsEnabled)
+        fixture.scheduler.advance(by: FrameStreamer.defaultInterval)
+        #expect(fixture.transport.sendAttempts == attempts + 2)
     }
 
-    /// The settings window's speed slider and blink color list must come back
-    /// after a relaunch even when a different mode ended up active, the same
-    /// way `lastSolidColor` does.
-    @Test func lastPresetSpeedAndBlinkColorsSurviveRelaunchWhileSolidIsActive() throws {
-        let defaults = Self.freshDefaults()
-        let colors = [RGBColor(r: 1, g: 2, b: 3), RGBColor(r: 4, g: 5, b: 6)]
+    @Test func onlyLightingSettingsArePersisted() {
+        let fixture = AppStateFixture()
+        let app = fixture.state
+        app.audio.micGain = 0.2
+        app.audio.isMicMuted = true
+        app.audio.monitorVolume = 0.3
+        app.audio.isMonitorMuted = true
+        app.lighting.settings.brightness = 0.5
+        app.microphoneTest.toggleTest()
+        fixture.notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
+        fixture.notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
 
-        let first = makeState(transport: MockHIDTransport(), defaults: defaults)
-        first.mode = .blink(colors: colors, speed: 88)
-        first.mode = .cycle(speed: 12)
-        first.mode = .solid(RGBColor(r: 0, g: 0, b: 0))
+        #expect(Array(fixture.persisted.keys) == [LightingSettingsStore.key])
 
-        let second = makeState(transport: MockHIDTransport(), defaults: defaults)
+        fixture.relaunch()
 
-        #expect(second.mode == .solid(RGBColor(r: 0, g: 0, b: 0)))
-        #expect(second.lastPresetSpeed == 12)
-        #expect(second.lastBlinkColors == colors)
-    }
-
-    @Test func corruptedPersistedBlinkSettingsFallBackToDefaults() throws {
-        let defaults = Self.freshDefaults()
-        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.lastBlinkColors")
-        defaults.set(999, forKey: "dev.alavreniuk.macmic.lastPresetSpeed")
-
-        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
-
-        #expect(state.lastBlinkColors == nil)
-        #expect(state.lastPresetSpeed == 100)
-    }
-
-    @Test func defaultsAreUsedWhenNothingPersistedYet() throws {
-        let state = makeState(transport: MockHIDTransport())
-
-        #expect(state.mode == .solid(RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)))
-        #expect(state.brightness == 1)
-        #expect(state.isEnabled == true)
-    }
-
-    @Test func reconnectReAppliesLastMode() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
-        let color = RGBColor(r: 9, g: 9, b: 9)
-        state.mode = .solid(color)
-
-        transport.simulateRemoval()
-        #expect(state.isConnected == false)
-
-        transport.simulateConnect()
-        state.streamer.tick()
-
-        #expect(state.isConnected == true)
-        #expect(transport.sentReports.last == Frame(color: color).dataPacket())
-    }
-
-    @Test func wakeReAppliesModeAfterSleepStopped() throws {
-        let transport = MockHIDTransport()
-        let notificationCenter = NotificationCenter()
-        let state = makeState(transport: transport, notificationCenter: notificationCenter)
-        let color = RGBColor(r: 5, g: 6, b: 7)
-        state.mode = .solid(color)
-
-        notificationCenter.post(name: NSWorkspace.willSleepNotification, object: nil)
-        state.streamer.tick() // no-op: stopped by sleep
-        let countAfterSleep = transport.sentReports.count
-
-        notificationCenter.post(name: NSWorkspace.didWakeNotification, object: nil)
-        state.streamer.tick()
-
-        #expect(transport.sentReports.count > countAfterSleep)
-        #expect(transport.sentReports.last == Frame(color: color).dataPacket())
-    }
-
-    @Test func transportErrorMarksDisconnected() async throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
-        #expect(state.isConnected == true)
-
-        transport.nextSendError = .sendFailed(-1)
-        state.streamer.tick()
-
-        // FrameStreamer delivers onError on the main queue, so give it a
-        // beat to run before asserting.
-        try await Task.sleep(nanoseconds: 50_000_000)
-        #expect(state.isConnected == false)
-    }
-
-    @Test func mutatingStateWhileDisconnectedDoesNotResumeStreaming() throws {
-        let transport = MockHIDTransport()
-        let state = makeState(transport: transport)
-        state.mode = .solid(RGBColor(r: 1, g: 2, b: 3))
-        state.streamer.tick()
-
-        transport.simulateRemoval()
-        #expect(state.isConnected == false)
-
-        state.mode = .solid(RGBColor(r: 9, g: 9, b: 9))
-        let countWhileDisconnected = transport.sentReports.count
-        state.streamer.tick()
-
-        #expect(transport.sentReports.count == countWhileDisconnected)
-    }
-
-    @Test func openFailureLeavesStateDisconnected() throws {
-        let transport = MockHIDTransport()
-        transport.nextOpenError = .openFailed(-1)
-
-        let state = makeState(transport: transport)
-
-        #expect(state.isConnected == false)
-    }
-
-    /// Regression test: `open()` succeeding must not be conflated with a
-    /// device actually being matched. `IOUSBHostTransport.open()` only
-    /// registers IOKit matching notifications; a real device match (or lack
-    /// thereof) is reported asynchronously via `onDeviceConnected`. Launching
-    /// with no mic plugged in must leave `isConnected == false` until a real
-    /// match notification arrives.
-    @Test func deviceAbsentAtLaunchLeavesStateDisconnected() throws {
-        let transport = MockHIDTransport()
-        transport.autoConnectOnOpen = false
-
-        let state = makeState(transport: transport)
-
-        #expect(state.isConnected == false)
-
-        transport.simulateConnect()
-        #expect(state.isConnected == true)
-    }
-
-    @Test func corruptedPersistedModeFallsBackToDefault() throws {
-        let defaults = Self.freshDefaults()
-        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.mode")
-
-        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
-
-        #expect(state.mode == .solid(RGBColor(r: 0xFF, g: 0xFF, b: 0xFF)))
-    }
-
-    @Test func corruptedPersistedLastSolidColorFallsBackToDefault() throws {
-        let defaults = Self.freshDefaults()
-        defaults.set(Data([0xFF, 0x00]), forKey: "dev.alavreniuk.macmic.lastSolidColor")
-        defaults.set(try! JSONEncoder().encode(LightMode.cycle(speed: 50)), forKey: "dev.alavreniuk.macmic.mode")
-
-        let state = makeState(transport: MockHIDTransport(), defaults: defaults)
-
-        #expect(state.lastSolidColor == RGBColor(r: 0xFF, g: 0xFF, b: 0xFF))
+        #expect(fixture.state.lighting.settings.brightness == 0.5)
+        #expect(fixture.state.audio.snapshot == .sample)
+        #expect(fixture.audioControl.writes.isEmpty)
     }
 }

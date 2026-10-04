@@ -18,9 +18,9 @@ public enum LightMode: Equatable, Sendable {
     case blink(colors: [RGBColor], speed: Int)
 }
 
-/// Manual `Codable` conformance (enums with associated values aren't
-/// synthesized) so `AppState` can persist the last-used mode to
-/// `UserDefaults`.
+/// Hand-written `Codable` with a fixed `kind`/`color`/`colors`/`speed`
+/// shape: the app persists it inside its lighting settings blob and reads it
+/// from the pre-blob `mode` key, so changing the shape resets users' lighting.
 extension LightMode: Codable {
     private enum CodingKeys: String, CodingKey {
         case kind, color, colors, speed

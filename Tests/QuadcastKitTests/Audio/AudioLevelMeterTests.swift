@@ -104,39 +104,3 @@ import Testing
         #expect(throttle.consume(0, at: 10.2) == nil)
     }
 }
-
-@Suite struct MicrophoneMonitorStateTests {
-    @Test func runningStatesCompareByOutputDeviceName() {
-        #expect(MicrophoneMonitorState.running(outputDeviceName: "AirPods Pro")
-            == .running(outputDeviceName: "AirPods Pro"))
-        #expect(MicrophoneMonitorState.running(outputDeviceName: "AirPods Pro")
-            != .running(outputDeviceName: nil))
-        #expect(MicrophoneMonitorState.failed(.engineFailed("x")) != .failed(.engineFailed("y")))
-    }
-
-    @Test func mockMonitorRecordsLifecycleAndFiresCallbacks() {
-        let monitor = MockMicrophoneMonitor()
-        var states: [MicrophoneMonitorState] = []
-        var levels: [Float] = []
-        monitor.onStateChanged = { states.append($0) }
-        monitor.onLevel = { levels.append($0) }
-
-        monitor.start(inputDevice: 4100)
-        #expect(monitor.state == .starting)
-        monitor.simulateRunning(outputDeviceName: "AirPods Pro")
-        monitor.simulateLevel(0.4)
-        monitor.start(inputDevice: 4200)
-        monitor.simulateFailure(.inputDeviceUnavailable)
-        monitor.stop()
-        monitor.stop()
-
-        #expect(monitor.startedDevices == [4100, 4200])
-        #expect(monitor.stopCount == 2)
-        #expect(levels == [0.4])
-        #expect(states == [
-            .starting, .running(outputDeviceName: "AirPods Pro"),
-            .starting, .failed(.inputDeviceUnavailable),
-            .stopped, .stopped,
-        ])
-    }
-}

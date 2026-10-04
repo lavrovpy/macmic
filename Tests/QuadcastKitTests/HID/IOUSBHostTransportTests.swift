@@ -28,6 +28,6 @@ import Testing
     @Test func vendorAndProductIDsMatchProtocolSpec() {
         #expect(IOUSBHostTransport.vendorID == 0x0951)
         #expect(IOUSBHostTransport.productIDs == [0x171f, 0x171d])
-        #expect(IOUSBHostTransport.preferredProductID == 0x171f)
+        #expect(QuadcastFunctionSet<Void>.preferredProductID == 0x171f)
     }
 }

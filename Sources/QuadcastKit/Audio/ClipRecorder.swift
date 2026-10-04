@@ -9,7 +9,7 @@
 import AVFoundation
 import Foundation
 
-/// The clip `AVAudioEngineMicrophoneMonitor` captures: a fixed-capacity PCM
+/// The clip `AVAudioEngineMicrophoneEngine` captures: a fixed-capacity PCM
 /// buffer the input tap appends to on Core Audio's I/O thread while
 /// `start`/`stop`/`elapsed` are called on main. The lock is held for the
 /// whole append (one tap buffer's memcpy), which is short enough for a
@@ -22,6 +22,7 @@ import Foundation
 final class ClipRecorder {
     private let lock = NSLock()
     private var clip: AVAudioPCMBuffer?
+    private var onFull: (() -> Void)?
 
     var isRecording: Bool {
         lock.withLock { clip != nil }
@@ -33,10 +34,14 @@ final class ClipRecorder {
     }
 
     /// Begins a new clip in `format` holding up to `capacity` frames; `false`
-    /// when the buffer cannot be allocated.
-    func start(format: AVAudioFormat, capacity: AVAudioFrameCount) -> Bool {
+    /// when the buffer cannot be allocated. `append` hands back `onFull` once
+    /// the clip is full.
+    func start(format: AVAudioFormat, capacity: AVAudioFrameCount, onFull: @escaping () -> Void) -> Bool {
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return false }
-        lock.withLock { clip = buffer }
+        lock.withLock {
+            clip = buffer
+            self.onFull = onFull
+        }
         return true
     }
 
@@ -44,19 +49,25 @@ final class ClipRecorder {
     /// recorded (or no recording was in progress).
     func stop() -> AVAudioPCMBuffer? {
         lock.withLock {
-            defer { clip = nil }
+            defer {
+                clip = nil
+                onFull = nil
+            }
             guard let clip, clip.frameLength > 0 else { return nil }
             return clip
         }
     }
 
-    /// I/O-thread entry: appends what fits. Returns `true` when the clip is
-    /// full after this append, which is the caller's cue to stop recording.
-    func append(_ buffer: AVAudioPCMBuffer) -> Bool {
+    /// I/O-thread entry: appends what fits. Returns the recording's `onFull`
+    /// exactly once, from the append that filled the clip, for the caller to
+    /// run off the I/O thread; `nil` otherwise.
+    func append(_ buffer: AVAudioPCMBuffer) -> (() -> Void)? {
         lock.withLock {
-            guard let clip else { return false }
+            guard let clip else { return nil }
             _ = Self.append(buffer, to: clip)
-            return clip.frameLength >= clip.frameCapacity
+            guard clip.frameLength >= clip.frameCapacity, let onFull else { return nil }
+            self.onFull = nil
+            return onFull
         }
     }
 

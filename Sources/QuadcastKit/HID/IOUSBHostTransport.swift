@@ -37,7 +37,8 @@ public final class IOUSBHostTransport: HIDTransport {
     public var onDeviceRemoved: (() -> Void)?
 
     static let vendorID = 0x0951
-    static let preferredProductID = 0x171f
+    /// Both functions of one mic; see `QuadcastFunctionSet` for which one
+    /// takes the control transfer and how removal is reported.
     static let productIDs = [0x171f, 0x171d]
 
     private static let bmRequestType: UInt8 = 0x21
@@ -50,8 +51,7 @@ public final class IOUSBHostTransport: HIDTransport {
     private var notificationPort: IONotificationPortRef?
     private var matchIterator: io_iterator_t = 0
     private var removalIterator: io_iterator_t = 0
-    private var devicesByEntryID: [UInt64: IOUSBHostDevice] = [:]
-    private var activeEntryID: UInt64?
+    private var functions = QuadcastFunctionSet<IOUSBHostDevice>()
 
     public init() {}
 
@@ -89,10 +89,10 @@ public final class IOUSBHostTransport: HIDTransport {
         handleRemoved(removalIterator)
     }
 
-    /// Tears down notifications and devices in a single `queue.sync` so a
-    /// matched/removed notification already scheduled on `queue` can't run
-    /// between the iterator/port teardown and the device teardown and add an
-    /// entry to `devicesByEntryID` that never gets `destroy()`-ed.
+    /// Tears down the iterators, the port and the devices in one
+    /// `queue.sync`. `handleMatched` seizes a device before its insert hops
+    /// onto `queue`, so an insert that lands after this finds the port gone
+    /// and destroys its device instead of adding it.
     public func close() {
         queue.sync {
             if matchIterator != 0 {
@@ -107,31 +107,29 @@ public final class IOUSBHostTransport: HIDTransport {
                 IONotificationPortDestroy(notificationPort)
             }
             notificationPort = nil
-            for device in devicesByEntryID.values {
+            for device in functions.removeAll() {
                 device.destroy()
             }
-            devicesByEntryID.removeAll()
-            activeEntryID = nil
         }
     }
 
     /// Runs on `queue` for its whole duration (not just the candidate
     /// snapshot) so a concurrent hotplug removal can't `destroy()` the
     /// `IOUSBHostDevice` this is actively sending a control transfer to;
-    /// `handleMatched`/`handleRemoved` mutate `devicesByEntryID` via
-    /// `queue.async`, so this serializes against them instead of racing.
+    /// `handleMatched`/`handleRemoved` mutate `functions` via `queue.async`,
+    /// so this serializes against them instead of racing.
     public func sendFeatureReport(_ bytes: [UInt8]) throws {
         try queue.sync {
-            let candidates = orderedCandidates()
+            let candidates = functions.orderedCandidates
             guard !candidates.isEmpty else {
                 throw HIDTransportError.deviceNotFound
             }
 
             var lastResult: IOReturn = kIOReturnNotFound
-            for (entryID, device) in candidates {
-                let result = Self.sendControlTransfer(bytes, to: device)
+            for candidate in candidates {
+                let result = Self.sendControlTransfer(bytes, to: candidate.handle)
                 if result == kIOReturnSuccess {
-                    activeEntryID = entryID
+                    functions.markActive(candidate.entryID)
                     return
                 }
                 lastResult = result
@@ -148,35 +146,18 @@ public final class IOUSBHostTransport: HIDTransport {
     ///
     /// Runs on `queue` for its whole duration, same as `sendFeatureReport`,
     /// so a concurrent hotplug removal or `close()` can't `destroy()` a
-    /// device this is still reading `deviceDescriptor` from or sending to.
+    /// device this is still sending to.
     public func probe() throws -> [USBProbeResult] {
         try queue.sync {
-            let devices = Array(devicesByEntryID.values)
-            guard !devices.isEmpty else {
+            let candidates = functions.orderedCandidates
+            guard !candidates.isEmpty else {
                 throw HIDTransportError.deviceNotFound
             }
-            return devices.map { device in
-                let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
-                let result = Self.sendControlTransfer(QuadcastPacket.headerPacket(), to: device)
-                return USBProbeResult(productID: productID, ioReturn: result)
+            return candidates.map { candidate in
+                let result = Self.sendControlTransfer(QuadcastPacket.headerPacket(), to: candidate.handle)
+                return USBProbeResult(productID: candidate.productID, ioReturn: result)
             }
         }
-    }
-
-    /// Try the last-known-good device first (sticky selection), otherwise
-    /// prefer the `0x171f` device before falling back to any other match.
-    private func orderedCandidates() -> [(UInt64, IOUSBHostDevice)] {
-        let entries = Array(devicesByEntryID)
-        if let activeEntryID, let device = devicesByEntryID[activeEntryID] {
-            return [(activeEntryID, device)] + entries.filter { $0.key != activeEntryID }
-        }
-        return entries.sorted { lhs, rhs in
-            productID(of: lhs.value) == Self.preferredProductID && productID(of: rhs.value) != Self.preferredProductID
-        }
-    }
-
-    private func productID(of device: IOUSBHostDevice) -> Int {
-        Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
     }
 
     /// Builds the SET_REPORT-equivalent control request for a payload of
@@ -221,33 +202,27 @@ public final class IOUSBHostTransport: HIDTransport {
             guard let device = try? IOUSBHostDevice(
                 __ioService: service, options: [.deviceSeize], queue: nil, interestHandler: nil
             ) else { continue }
+            let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
             queue.async { [weak self] in
-                guard let self else { return }
-                self.devicesByEntryID.updateValue(device, forKey: entryID)?.destroy()
+                guard let self, self.notificationPort != nil else {
+                    device.destroy()
+                    return
+                }
+                self.functions.insert(device, entryID: entryID, productID: productID)?.destroy()
                 DispatchQueue.main.async { self.onDeviceConnected?() }
             }
         }
     }
 
-    /// One physical mic enumerates as two USB functions (`0x171f`, `0x171d`;
-    /// see `productIDs`), each a separate matched service with its own
-    /// removal notification. Only surfaces `onDeviceRemoved` once every
-    /// matched function is gone, so a lone termination of one function (e.g.
-    /// the always-rejecting `0x171d`) doesn't stop the streamer while the
-    /// other is still present and working.
     private func handleRemoved(_ iterator: io_iterator_t) {
         while case let service = IOIteratorNext(iterator), service != 0 {
             defer { IOObjectRelease(service) }
             var entryID: UInt64 = 0
             IORegistryEntryGetRegistryEntryID(service, &entryID)
             queue.async { [weak self] in
-                guard let self else { return }
-                guard let device = self.devicesByEntryID.removeValue(forKey: entryID) else { return }
-                device.destroy()
-                if self.activeEntryID == entryID {
-                    self.activeEntryID = nil
-                }
-                if self.devicesByEntryID.isEmpty {
+                guard let self, let removal = self.functions.remove(entryID: entryID) else { return }
+                removal.handle.destroy()
+                if removal.isEmpty {
                     DispatchQueue.main.async { self.onDeviceRemoved?() }
                 }
             }

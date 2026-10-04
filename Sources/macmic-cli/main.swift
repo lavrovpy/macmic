@@ -34,11 +34,6 @@ func fail(_ message: String) -> Never {
 /// Opens the transport and gives the async device-matching notification a
 /// moment to enumerate already-connected QuadCast USB devices before we act
 /// on them.
-///
-/// Uses `IOUSBHostTransport` (raw USB control transfers), not
-/// `IOKitHIDTransport`: per the Task 5 hardware finding, `IOHIDManager`
-/// cannot reach the QuadCast S's vendor-page report handler on this system,
-/// while a raw control transfer via `IOUSBHostDevice` does.
 func openAndWaitForEnumeration() -> IOUSBHostTransport {
     let transport = IOUSBHostTransport()
     do {
@@ -128,119 +123,28 @@ func streamUntilInterrupted(mode: LightMode, brightness: Double) -> Never {
     dispatchMain()
 }
 
-/// Passes the mic through the system default output for `seconds`, printing
-/// every monitor state change and a level meter redrawn in place. With
-/// `recordSeconds`, instead records that long once the pass-through is up,
-/// plays the clip back, and exits when playback ends (exit 1 if the clip
-/// came out empty). The device-list scan in `open()` is synchronous, but a
-/// mic that is still enumerating is only reported by a later HAL
-/// notification, so the input id is polled on the run loop for a few
-/// seconds before giving up.
-func runMicrophoneTest(control: CoreAudioDeviceControl, seconds: Int, recordSeconds: Int? = nil) -> Never {
-    let deadline = Date().addingTimeInterval(3)
-    var inputDevice = control.deviceID(for: .input)
-    while inputDevice == nil, Date() < deadline {
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
-        inputDevice = control.deviceID(for: .input)
-    }
-    guard let inputDevice else {
-        control.close()
-        fail("audio test: no QuadCast microphone input device found")
-    }
-
-    let monitor = AVAudioEngineMicrophoneMonitor()
-    var level: Float = 0
-    var meterShown = false
-    let clearMeter = {
-        if meterShown {
-            print()
-            meterShown = false
-        }
-    }
-    let meterTimer = DispatchSource.makeTimerSource(queue: .main)
-    let finish: (Int32) -> Never = { code in
-        meterTimer.cancel()
-        monitor.onStateChanged = nil
-        monitor.onRecorderStateChanged = nil
-        monitor.stop()
+/// Runs `audio test` on the main queue until the run finishes or SIGINT
+/// arrives, then closes `control` and exits with the run's code.
+func runMicrophoneTest(control: CoreAudioDeviceControl, mode: MicrophoneTestRun.Mode) -> Never {
+    let run = MicrophoneTestRun(
+        session: MicrophoneTestSession(audioControl: control),
+        mode: mode,
+        scheduler: DispatchScheduler(),
+        terminal: StandardTerminal()
+    ) { code in
         control.close()
         exit(code)
     }
 
-    var recordingStarted = false
-    monitor.onStateChanged = { state in
-        clearMeter()
-        print(formatMonitorState(state))
-        if case .failed = state {
-            finish(1)
-        }
-        guard let recordSeconds, case .running = state, !recordingStarted else { return }
-        recordingStarted = true
-        monitor.startRecording()
-        guard case .recording = monitor.recorderState else {
-            print("could not start recording")
-            finish(1)
-        }
-        print("recording for \(recordSeconds) s — say something…")
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(recordSeconds)) {
-            monitor.stopRecording()
-        }
-    }
-    // Only `.idle` matters here: once after the recording (start playback)
-    // and once after playback (exit). Progress shows on the meter line.
-    var playbackStarted = false
-    monitor.onRecorderStateChanged = { recorderState in
-        guard case let .idle(duration) = recorderState else { return }
-        clearMeter()
-        if playbackStarted {
-            print("playback finished")
-            finish(0)
-        }
-        guard let duration else {
-            print("recorded nothing")
-            finish(1)
-        }
-        print(String(format: "recorded %.1f s", duration))
-        monitor.startPlayback()
-        guard case .playing = monitor.recorderState else {
-            print("could not start playback")
-            finish(1)
-        }
-        playbackStarted = true
-        print("playing back…")
-    }
-    monitor.onLevel = { level = $0 }
-
-    meterTimer.schedule(deadline: .now(), repeating: 0.1)
-    meterTimer.setEventHandler {
-        guard case .running = monitor.state else { return }
-        // Clear to end of line: the recorder suffix changes width.
-        print("\r\(formatLevelMeter(level))  \(formatRecorderState(monitor.recorderState))\u{1B}[K", terminator: "")
-        fflush(stdout)
-        meterShown = true
-    }
-    meterTimer.resume()
-
-    if recordSeconds == nil {
-        DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
-            finish(0)
-        }
-    }
-
     let signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
     signal(SIGINT, SIG_IGN)
-    signalSource.setEventHandler {
-        finish(0)
-    }
+    signalSource.setEventHandler { run.interrupt() }
     signalSource.resume()
 
-    if let recordSeconds {
-        print("testing microphone (input device \(inputDevice)): record \(recordSeconds) s, then play back…")
-    } else {
-        print("testing microphone (input device \(inputDevice)) for \(seconds) s…")
+    DispatchQueue.main.async { run.begin() }
+    withExtendedLifetime((run, signalSource)) {
+        dispatchMain()
     }
-    monitor.start(inputDevice: inputDevice)
-    dispatchMain()
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -299,9 +203,9 @@ case "audio":
         case let .setMuted(muted, direction):
             try control.setMuted(muted, for: direction)
         case let .test(seconds):
-            runMicrophoneTest(control: control, seconds: seconds)
+            runMicrophoneTest(control: control, mode: .listen(seconds: seconds))
         case let .testRecording(seconds):
-            runMicrophoneTest(control: control, seconds: seconds, recordSeconds: seconds)
+            runMicrophoneTest(control: control, mode: .recordThenPlay(seconds: seconds))
         }
     } catch {
         fail("audio: \(error)")
