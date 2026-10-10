@@ -97,10 +97,10 @@ import Testing
 
         test.toggleTest()
         test.toggleRecording()
-        #expect(test.recorderStatusText == "Recording… 0.0 s")
+        #expect(test.recorderStatusText == "Recording… 0.0 s of 30.0 s")
         fixture.engine.recordedDuration = 1.26
         fixture.scheduler.advance(by: 0.1)
-        #expect(test.recorderStatusText == "Recording… 1.3 s")
+        #expect(test.recorderStatusText == "Recording… 1.3 s of 30.0 s")
 
         test.toggleRecording()
         #expect(test.recorderStatusText == "Recorded 1.3 s")
@@ -112,7 +112,6 @@ import Testing
 
         test.togglePlayback()
         #expect(test.recorderStatusText == "Recorded 1.3 s")
-        #expect(test.maxClipDuration == 30)
     }
 
     @Test func accessDeniedHintOnlyForThatFailure() {
