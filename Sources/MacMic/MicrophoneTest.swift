@@ -137,14 +137,10 @@ final class MicrophoneTest: ObservableObject {
         case .idle(let duration?):
             return "Recorded \(Self.formatSeconds(duration))"
         case .recording(let elapsed):
-            return "Recording… \(Self.formatSeconds(elapsed))"
+            return "Recording… \(Self.formatSeconds(elapsed)) of \(Self.formatSeconds(MicrophoneTestSession.maxClipDuration))"
         case .playing(let elapsed, let duration):
             return "Playing \(Self.formatSeconds(elapsed)) of \(Self.formatSeconds(duration))"
         }
-    }
-
-    var maxClipDuration: TimeInterval {
-        MicrophoneTestSession.maxClipDuration
     }
 
     static func formatSeconds(_ seconds: TimeInterval) -> String {

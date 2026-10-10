@@ -53,12 +53,6 @@ struct AudioPage: View {
                 Toggle("Mute monitoring", isOn: $audio.isMonitorMuted)
             }
             .disabled(!audio.monitorControlsEnabled)
-
-            Section {
-                Text("These are the QuadCast S's system audio controls. The gain knob on the mic and other apps change them too; MacMic follows along. The polar pattern is a physical knob and can't be set from software.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
         }
         .formStyle(.grouped)
         // Warning: keep this on the `Form`, not on a `Section`. Grouped-Form
@@ -140,7 +134,7 @@ private struct MicrophoneTestSection: View {
         } header: {
             Text("Test Microphone")
         } footer: {
-            Text("Plays the microphone through your current output device so you can hear gain changes, or record up to \(Int(test.maxClipDuration)) seconds and play it back. Use headphones to avoid feedback while listening live.")
+            Text("Use headphones — the live test plays the microphone through your current output.")
         }
         .disabled(!test.controlsEnabled)
     }
