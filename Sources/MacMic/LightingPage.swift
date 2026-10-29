@@ -36,6 +36,7 @@ struct LightingPage: View {
                     Text("The QuadCast S does not remember its colors. MacMic keeps sending frames while it runs, so the lighting returns to the mic's default when MacMic quits or lighting is off.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Section {

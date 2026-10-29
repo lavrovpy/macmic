@@ -2,7 +2,10 @@
 
 A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast S microphone. HyperX only ships NGENUITY for Windows, so without host software the mic just displays its default rainbow — MacMic fills that gap on macOS.
 
-![screenshot placeholder](docs/screenshot.png)
+<p align="center">
+  <img src="docs/screenshots/lighting.png" alt="MacMic's Lighting page: lighting on/off switch, Solid / Rainbow Cycle / Blink mode picker, color swatches with RGB sliders and a hex field, and brightness" width="49%">
+  <img src="docs/screenshots/audio.png" alt="MacMic's Audio page: microphone gain and mute, Test Microphone with a level meter and Record / Play, and headphone-monitoring volume and mute" width="49%">
+</p>
 
 ## Features (v1)
 
