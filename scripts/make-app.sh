@@ -9,7 +9,8 @@
 #
 # Builds the universal (arm64 + x86_64) release binary and assembles it into
 # dist/MacMic.app, an LSUIElement (menu-bar-only, no Dock icon) app bundle
-# signed with the hardened runtime and scripts/MacMic.entitlements.
+# whose Info.plist is Sources/MacMic/Info.plist plus the version keys, signed
+# with the hardened runtime and scripts/MacMic.entitlements.
 #
 # Environment:
 #   MACMIC_VERSION        CFBundleShortVersionString (default 1.0.0)
@@ -22,10 +23,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_NAME="MacMic"
-BUNDLE_ID="dev.alavreniuk.macmic"
 VERSION="${MACMIC_VERSION:-1.0.0}"
 BUILD="${MACMIC_BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
 SIGN_IDENTITY="${MACMIC_SIGN_IDENTITY:--}"
+INFO_PLIST="$ROOT_DIR/Sources/MacMic/Info.plist"
 ENTITLEMENTS="$ROOT_DIR/scripts/MacMic.entitlements"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
@@ -56,42 +57,9 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 cp "$RELEASE_BIN" "$MACOS_DIR/$APP_NAME"
 
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleDevelopmentRegion</key>
-    <string>en</string>
-    <key>CFBundleExecutable</key>
-    <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>
-    <string>$BUNDLE_ID</string>
-    <key>CFBundleInfoDictionaryVersion</key>
-    <string>6.0</string>
-    <key>CFBundleName</key>
-    <string>$APP_NAME</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>CFBundleVersion</key>
-    <string>$BUILD</string>
-    <key>LSApplicationCategoryType</key>
-    <string>public.app-category.utilities</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSHumanReadableCopyright</key>
-    <string>Copyright © 2026 Andrii Lavreniuk. Licensed under the GNU GPL v2.</string>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>MacMic plays your QuadCast S microphone through your speakers or headphones when you test it from the Audio page.</string>
-</dict>
-</plist>
-PLIST
+cp "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
+plutil -insert CFBundleShortVersionString -string "$VERSION" "$CONTENTS_DIR/Info.plist"
+plutil -insert CFBundleVersion -string "$BUILD" "$CONTENTS_DIR/Info.plist"
 
 # Under the hardened runtime (required for notarization) TCC silently denies
 # the microphone unless the signature carries the audio-input entitlement.

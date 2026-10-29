@@ -76,10 +76,12 @@ reviews:
         on hardware.
     - path: "scripts/**"
       instructions: |
-        GPLv2-only header on new shell files. scripts/make-app.sh is the
-        only place the app bundle Info.plist is authored; it must keep
-        NSMicrophoneUsageDescription. Prefer updating scripts/test-make-app.sh
-        when the bundle layout or required plist keys change.
+        GPLv2-only header on new shell files. Sources/MacMic/Info.plist is the
+        only place the app's Info.plist is authored (embedded in the executable
+        by Package.swift, copied into the bundle by scripts/make-app.sh, which
+        adds only the version keys); it must keep NSMicrophoneUsageDescription.
+        Prefer updating scripts/test-make-app.sh when the bundle layout or
+        required plist keys change.
   finishing_touches:
     docstrings:
       enabled: false

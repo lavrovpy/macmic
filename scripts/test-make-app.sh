@@ -53,6 +53,12 @@ if ! plutil -lint "$INFO_PLIST" >/dev/null; then
 fi
 echo "PASS: $INFO_PLIST is well-formed"
 
+if ! plutil -extract CFBundleShortVersionString raw "$INFO_PLIST" >/dev/null 2>&1; then
+    echo "FAIL: $INFO_PLIST has no CFBundleShortVersionString" >&2
+    exit 1
+fi
+echo "PASS: $INFO_PLIST has CFBundleShortVersionString"
+
 if ! plutil -extract CFBundleVersion raw "$INFO_PLIST" | grep -Eq '^[0-9]+$'; then
     echo "FAIL: CFBundleVersion in $INFO_PLIST is not a plain build number" >&2
     exit 1
