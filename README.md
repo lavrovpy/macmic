@@ -19,7 +19,7 @@ Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login
 
 ## Install
 
-Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no signed release yet (see Known Limitations). Build it yourself:
+Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no notarized release yet (see Known Limitations). Build it yourself:
 
 ```sh
 git clone <this repo>
@@ -28,7 +28,19 @@ cd macmic
 open dist/MacMic.app
 ```
 
-`scripts/make-app.sh` builds the release binary with `swift build -c release`, assembles `dist/MacMic.app` (with an `LSUIElement` `Info.plist` so it never shows a Dock icon), and ad-hoc code-signs it. Since the app isn't notarized, the first launch may need a right-click → Open, or `xattr -dr com.apple.quarantine dist/MacMic.app`, to get past Gatekeeper.
+`scripts/make-app.sh` builds a universal (Apple silicon + Intel) release binary, assembles `dist/MacMic.app` (with an `LSUIElement` `Info.plist` so it never shows a Dock icon), and signs it ad-hoc with the hardened runtime and the microphone entitlement from `scripts/MacMic.entitlements`. A build you made yourself isn't quarantined, so Gatekeeper doesn't get involved; a copy downloaded from someone else's ad-hoc build would need `xattr -dr com.apple.quarantine MacMic.app`.
+
+### Releasing
+
+`scripts/release.sh` produces a notarized build for GitHub releases and Homebrew. It needs a **Developer ID Application** certificate (an *Apple Development* certificate can't be notarized) and notarytool credentials saved once with `xcrun notarytool store-credentials macmic-notary`:
+
+```sh
+MACMIC_VERSION=1.0.0 \
+MACMIC_SIGN_IDENTITY="Developer ID Application: <name> (<team id>)" \
+scripts/release.sh
+```
+
+It signs, notarizes and staples `dist/MacMic.app`, zips it as `dist/MacMic-<version>.zip`, and writes `dist/macmic.rb`, a Homebrew cask pointing at that zip on the `v<version>` GitHub release. Publish the cask from a tap repository (`lavrovpy/homebrew-tap`, `Casks/macmic.rb`) so users can `brew install --cask lavrovpy/tap/macmic`; the official `homebrew/cask` repository only takes apps that meet its notability thresholds.
 
 ## Usage
 
@@ -126,6 +138,6 @@ The GitHub App has to be [installed on this repository](https://github.com/apps/
 - Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
 - Test Microphone pins the mic's sample rate to the output's (typically 48 kHz) and leaves it there after the test; it has been verified to start, run and meter the input, but nobody has yet listened to confirm the pass-through is audible
 - Recovery from a failing USB send is retried every ≤10 s, so lighting can take up to 10 s to come back after the device accepts frames again; this path hasn't been seen on hardware (a second process can't take the device from a running MacMic to provoke it) and is covered only by `LightingTests`
-- Not code-signed with a Developer ID or notarized — Gatekeeper will warn on first launch
+- No Developer ID-signed, notarized release published yet; `scripts/release.sh` builds one once a Developer ID certificate is available
 - Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
-- Unsandboxed: MacMic needs raw USB device access, so it isn't (and can't easily be) distributed via the Mac App Store
+- Unsandboxed: MacMic seizes the mic's USB device from the kernel HID driver and creates a private aggregate audio device, neither verified to work inside the App Sandbox that the Mac App Store requires; the GPLv2 license (including the ported QuadcastRGB code) is also generally considered incompatible with App Store terms
