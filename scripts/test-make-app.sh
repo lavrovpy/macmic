@@ -15,8 +15,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 if command -v shellcheck >/dev/null 2>&1; then
-    echo "==> shellcheck scripts/make-app.sh"
-    shellcheck scripts/make-app.sh
+    echo "==> shellcheck scripts/*.sh"
+    shellcheck scripts/*.sh
 else
     echo "==> shellcheck not installed, skipping lint"
 fi
@@ -24,8 +24,9 @@ fi
 echo "==> Running scripts/make-app.sh"
 bash scripts/make-app.sh
 
-APP_BIN="dist/MacMic.app/Contents/MacOS/MacMic"
-INFO_PLIST="dist/MacMic.app/Contents/Info.plist"
+APP_DIR="dist/MacMic.app"
+APP_BIN="$APP_DIR/Contents/MacOS/MacMic"
+INFO_PLIST="$APP_DIR/Contents/Info.plist"
 
 if [[ ! -x "$APP_BIN" ]]; then
     echo "FAIL: $APP_BIN does not exist or is not executable" >&2
@@ -51,5 +52,42 @@ if ! plutil -lint "$INFO_PLIST" >/dev/null; then
     exit 1
 fi
 echo "PASS: $INFO_PLIST is well-formed"
+
+if ! plutil -extract CFBundleVersion raw "$INFO_PLIST" | grep -Eq '^[0-9]+$'; then
+    echo "FAIL: CFBundleVersion in $INFO_PLIST is not a plain build number" >&2
+    exit 1
+fi
+echo "PASS: CFBundleVersion is a build number"
+
+for arch in arm64 x86_64; do
+    if ! lipo -archs "$APP_BIN" | tr ' ' '\n' | grep -qx "$arch"; then
+        echo "FAIL: $APP_BIN has no $arch slice ($(lipo -archs "$APP_BIN"))" >&2
+        exit 1
+    fi
+done
+echo "PASS: $APP_BIN is universal (arm64 + x86_64)"
+
+# A binary stamped with an older SDK than the one it was built with runs in
+# macOS's compatibility mode for that SDK (see the -isysroot note in make-app.sh).
+EXPECTED_SDK="$(xcrun --sdk macosx --show-sdk-version)"
+STAMPED_SDKS="$(vtool -show-build "$APP_BIN" | awk '$1 == "sdk" { print $2 }' | sort -u)"
+if [[ "$STAMPED_SDKS" != "$EXPECTED_SDK" ]]; then
+    echo "FAIL: $APP_BIN is stamped with SDK '$STAMPED_SDKS', expected $EXPECTED_SDK" >&2
+    exit 1
+fi
+echo "PASS: $APP_BIN is stamped with SDK $EXPECTED_SDK"
+
+if ! codesign --display --verbose "$APP_DIR" 2>&1 | grep -Eq '^CodeDirectory .*flags=.*runtime'; then
+    echo "FAIL: $APP_DIR is not signed with the hardened runtime" >&2
+    exit 1
+fi
+echo "PASS: $APP_DIR is signed with the hardened runtime"
+
+# Under the hardened runtime, TCC denies the microphone without this entitlement.
+if ! codesign --display --entitlements - --xml "$APP_DIR" 2>/dev/null | grep -q "com.apple.security.device.audio-input"; then
+    echo "FAIL: $APP_DIR is not signed with com.apple.security.device.audio-input" >&2
+    exit 1
+fi
+echo "PASS: $APP_DIR carries com.apple.security.device.audio-input"
 
 echo "==> All checks passed"
