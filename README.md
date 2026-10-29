@@ -2,7 +2,10 @@
 
 A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast S microphone. HyperX only ships NGENUITY for Windows, so without host software the mic just displays its default rainbow — MacMic fills that gap on macOS.
 
-![screenshot placeholder](docs/screenshot.png)
+<p align="center">
+  <img src="docs/screenshots/lighting.png" alt="MacMic's Lighting page: lighting on/off switch, Solid / Rainbow Cycle / Blink mode picker, color swatches with RGB sliders and a hex field, and brightness" width="49%">
+  <img src="docs/screenshots/audio.png" alt="MacMic's Audio page: microphone gain and mute, Test Microphone with a level meter and Record / Play, and headphone-monitoring volume and mute" width="49%">
+</p>
 
 ## Features (v1)
 
@@ -13,13 +16,13 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - Recovers automatically on device hotplug and sleep/wake
 - Microphone gain and mute, headphone-monitoring volume and mute — the same controls as System Settings → Sound, kept in sync with the mic's gain knob and other apps
 - **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Or record up to 30 seconds of yourself and play it back to hear how you sound to others. Use headphones for the live pass-through: speakers in the same room as the mic will feed back (recording and playback don't).
-- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio, Device) for everything else
+- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio) for everything else
 
 Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/completed/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
 
 ## Install
 
-Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no signed release yet (see Known Limitations). Build it yourself:
+Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no notarized release yet (see Known Limitations). Build it yourself:
 
 ```sh
 git clone <this repo>
@@ -28,7 +31,19 @@ cd macmic
 open dist/MacMic.app
 ```
 
-`scripts/make-app.sh` builds the release binary with `swift build -c release`, assembles `dist/MacMic.app` (with an `LSUIElement` `Info.plist` so it never shows a Dock icon), and ad-hoc code-signs it. Since the app isn't notarized, the first launch may need a right-click → Open, or `xattr -dr com.apple.quarantine dist/MacMic.app`, to get past Gatekeeper.
+`scripts/make-app.sh` builds a universal (Apple silicon + Intel) release binary, assembles `dist/MacMic.app` (with an `LSUIElement` `Info.plist` so it never shows a Dock icon), and signs it ad-hoc with the hardened runtime and the microphone entitlement from `scripts/MacMic.entitlements`. A build you made yourself isn't quarantined, so Gatekeeper doesn't get involved; a copy downloaded from someone else's ad-hoc build would need `xattr -dr com.apple.quarantine MacMic.app`.
+
+### Releasing
+
+`scripts/release.sh` produces a notarized build for GitHub releases and Homebrew. It needs a **Developer ID Application** certificate (an *Apple Development* certificate can't be notarized) and notarytool credentials saved once with `xcrun notarytool store-credentials macmic-notary`:
+
+```sh
+MACMIC_VERSION=1.0.0 \
+MACMIC_SIGN_IDENTITY="Developer ID Application: <name> (<team id>)" \
+scripts/release.sh
+```
+
+It signs, notarizes and staples `dist/MacMic.app`, zips it as `dist/MacMic-<version>.zip`, and writes `dist/macmic.rb`, a Homebrew cask pointing at that zip on the `v<version>` GitHub release. Publish the cask from a tap repository (`lavrovpy/homebrew-tap`, `Casks/macmic.rb`) so users can `brew install --cask lavrovpy/tap/macmic`; the official `homebrew/cask` repository only takes apps that meet its notability thresholds.
 
 ## Usage
 
@@ -41,11 +56,10 @@ Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
 - **Open MacMic…** (⌘,) — opens the main window
 - **Quit MacMic**
 
-The main window (also opened by launching the app again from Finder or Launchpad) has three sidebar pages:
+The main window (also opened by launching the app again from Finder or Launchpad) has two sidebar pages:
 
-- **Lighting** — mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
+- **Lighting** — the lighting on/off switch (with a warning above it while the mic isn't found or isn't responding); mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
 - **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa. Below them, **Test Microphone** plays the mic through the system's current default output (it follows you if you switch to AirPods mid-test) and shows an input level meter; while the test runs, **Record** captures up to 30 seconds and **Play** plays the clip back through the same output with the live pass-through muted, the meter following the clip. The clip lives only as long as the test. The first click asks for microphone permission, and if that's denied the page points you at System Settings → Privacy & Security → Microphone.
-- **Device** — lighting and audio connection status and the lighting on/off switch
 
 There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
 
@@ -126,6 +140,6 @@ The GitHub App has to be [installed on this repository](https://github.com/apps/
 - Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
 - Test Microphone pins the mic's sample rate to the output's (typically 48 kHz) and leaves it there after the test; it has been verified to start, run and meter the input, but nobody has yet listened to confirm the pass-through is audible
 - Recovery from a failing USB send is retried every ≤10 s, so lighting can take up to 10 s to come back after the device accepts frames again; this path hasn't been seen on hardware (a second process can't take the device from a running MacMic to provoke it) and is covered only by `LightingTests`
-- Not code-signed with a Developer ID or notarized — Gatekeeper will warn on first launch
+- No Developer ID-signed, notarized release published yet; `scripts/release.sh` builds one once a Developer ID certificate is available
 - Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
-- Unsandboxed: MacMic needs raw USB device access, so it isn't (and can't easily be) distributed via the Mac App Store
+- Unsandboxed: MacMic seizes the mic's USB device from the kernel HID driver and creates a private aggregate audio device, neither verified to work inside the App Sandbox that the Mac App Store requires; the GPLv2 license (including the ported QuadcastRGB code) is also generally considered incompatible with App Store terms

@@ -9,7 +9,9 @@
 import QuadcastKit
 import SwiftUI
 
-/// Mode picker, the active mode's color/speed controls, and brightness.
+/// Lighting status (only while the mic isn't connected and accepting frames),
+/// the master lighting switch, mode picker, the active mode's color/speed
+/// controls, and brightness.
 /// Color editing is inline (`InlineColorEditor`) rather than `ColorPicker`
 /// so no floating Colors panel ever opens next to the window.
 struct LightingPage: View {
@@ -20,49 +22,67 @@ struct LightingPage: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Mode", selection: $lighting.settings.modeKind) {
-                    ForEach(LightModeKind.allCases) { kind in
-                        Text(kind.title).tag(kind)
+            if lighting.status != .connected {
+                Section {
+                    Label(lighting.statusText, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Group {
+                Section {
+                    Toggle("Lighting enabled", isOn: $lighting.settings.isEnabled)
+                } footer: {
+                    Text("The QuadCast S does not remember its colors. MacMic keeps sending frames while it runs, so the lighting returns to the mic's default when MacMic quits or lighting is off.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                Section {
+                    Picker("Mode", selection: $lighting.settings.modeKind) {
+                        ForEach(LightModeKind.allCases) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                }
+
+                switch lighting.settings.modeKind {
+                case .solid:
+                    Section("Color") {
+                        InlineColorEditor(color: $lighting.settings.solidColor)
+                    }
+                case .cycle:
+                    Section("Speed") {
+                        speedSlider
+                    }
+                case .blink:
+                    Section("Colors") {
+                        blinkSwatchStrip
+                        InlineColorEditor(color: blinkColorBinding(at: selectedIndex))
+                    }
+                    Section("Speed") {
+                        speedSlider
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
 
-            switch lighting.settings.modeKind {
-            case .solid:
-                Section("Color") {
-                    InlineColorEditor(color: $lighting.settings.solidColor)
-                }
-            case .cycle:
-                Section("Speed") {
-                    speedSlider
-                }
-            case .blink:
-                Section("Colors") {
-                    blinkSwatchStrip
-                    InlineColorEditor(color: blinkColorBinding(at: selectedIndex))
-                }
-                Section("Speed") {
-                    speedSlider
+                Section("Brightness") {
+                    Slider(value: $lighting.settings.brightness, in: 0...1) {
+                        EmptyView()
+                    } minimumValueLabel: {
+                        Image(systemName: "sun.min")
+                    } maximumValueLabel: {
+                        Image(systemName: "sun.max")
+                    }
+                    .accessibilityLabel("Brightness")
+                    .accessibilityValue("\(Int((lighting.settings.brightness * 100).rounded())) percent")
                 }
             }
-
-            Section("Brightness") {
-                Slider(value: $lighting.settings.brightness, in: 0...1) {
-                    EmptyView()
-                } minimumValueLabel: {
-                    Image(systemName: "sun.min")
-                } maximumValueLabel: {
-                    Image(systemName: "sun.max")
-                }
-                .accessibilityLabel("Brightness")
-                .accessibilityValue("\(Int((lighting.settings.brightness * 100).rounded())) percent")
-            }
+            .disabled(!lighting.controlsEnabled)
         }
         .formStyle(.grouped)
-        .disabled(!lighting.controlsEnabled)
     }
 
     private var speedSlider: some View {

@@ -7,25 +7,46 @@
 # the Free Software Foundation, version 2 of the License ONLY.
 # See LICENSE for the full license text.
 #
-# Builds the release binary and assembles it into dist/MacMic.app, an
-# ad-hoc-signed, LSUIElement (menu-bar-only, no Dock icon) app bundle.
+# Builds the universal (arm64 + x86_64) release binary and assembles it into
+# dist/MacMic.app, an LSUIElement (menu-bar-only, no Dock icon) app bundle
+# whose Info.plist is Sources/MacMic/Info.plist plus the version keys, signed
+# with the hardened runtime and scripts/MacMic.entitlements.
+#
+# Environment:
+#   MACMIC_VERSION        CFBundleShortVersionString (default 1.0.0)
+#   MACMIC_BUILD          CFBundleVersion, must only grow (default: commit count)
+#   MACMIC_SIGN_IDENTITY  codesign identity (default "-", ad-hoc); scripts/release.sh
+#                         passes a "Developer ID Application" identity
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 APP_NAME="MacMic"
-BUNDLE_ID="dev.alavreniuk.macmic"
-VERSION="1.0.0"
+VERSION="${MACMIC_VERSION:-1.0.0}"
+BUILD="${MACMIC_BUILD:-$(git rev-list --count HEAD 2>/dev/null || echo 1)}"
+SIGN_IDENTITY="${MACMIC_SIGN_IDENTITY:--}"
+INFO_PLIST="$ROOT_DIR/Sources/MacMic/Info.plist"
+ENTITLEMENTS="$ROOT_DIR/scripts/MacMic.entitlements"
 DIST_DIR="$ROOT_DIR/dist"
 APP_DIR="$DIST_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 
-echo "==> Building release binary"
-swift build -c release --product "$APP_NAME"
+# SwiftPM's default build system (Swift 6.4+) links without SDKROOT set, so
+# clang can't read the SDK version and stamps the deployment target (13.0) as
+# the binary's SDK in LC_BUILD_VERSION; macOS then runs the app in its old-SDK
+# compatibility mode. An explicit -isysroot on the link restores the real SDK.
+SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
+BUILD_ARGS=(
+    -c release --product "$APP_NAME" --arch arm64 --arch x86_64
+    -Xswiftc -Xclang-linker -Xswiftc -isysroot -Xswiftc -Xclang-linker -Xswiftc "$SDK_PATH"
+)
 
-RELEASE_BIN="$(swift build -c release --product "$APP_NAME" --show-bin-path)/$APP_NAME"
+echo "==> Building universal release binary"
+swift build "${BUILD_ARGS[@]}"
+
+RELEASE_BIN="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)/$APP_NAME"
 if [[ ! -x "$RELEASE_BIN" ]]; then
     echo "error: release binary not found at $RELEASE_BIN" >&2
     exit 1
@@ -36,40 +57,22 @@ rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR"
 cp "$RELEASE_BIN" "$MACOS_DIR/$APP_NAME"
 
-cat > "$CONTENTS_DIR/Info.plist" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleExecutable</key>
-    <string>$APP_NAME</string>
-    <key>CFBundleIdentifier</key>
-    <string>$BUNDLE_ID</string>
-    <key>CFBundleName</key>
-    <string>$APP_NAME</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleShortVersionString</key>
-    <string>$VERSION</string>
-    <key>CFBundleVersion</key>
-    <string>$VERSION</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>13.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-    <key>NSMicrophoneUsageDescription</key>
-    <string>MacMic plays your QuadCast S microphone through your speakers or headphones when you test it from the Audio page.</string>
-</dict>
-</plist>
-PLIST
+cp "$INFO_PLIST" "$CONTENTS_DIR/Info.plist"
+plutil -insert CFBundleShortVersionString -string "$VERSION" "$CONTENTS_DIR/Info.plist"
+plutil -insert CFBundleVersion -string "$BUILD" "$CONTENTS_DIR/Info.plist"
 
-echo "==> Code signing (ad-hoc)"
-codesign --force --sign - "$APP_DIR"
+# Under the hardened runtime (required for notarization) TCC silently denies
+# the microphone unless the signature carries the audio-input entitlement.
+SIGN_ARGS=(--force --options runtime --entitlements "$ENTITLEMENTS" --sign "$SIGN_IDENTITY")
+if [[ "$SIGN_IDENTITY" != "-" ]]; then
+    SIGN_ARGS+=(--timestamp)
+fi
+
+echo "==> Code signing ($SIGN_IDENTITY, hardened runtime)"
+codesign "${SIGN_ARGS[@]}" "$APP_DIR"
 
 echo "==> Verifying code signature"
-codesign --verify --verbose "$APP_DIR"
+codesign --verify --strict --verbose=2 "$APP_DIR"
 
 echo "==> Launch check"
 "$MACOS_DIR/$APP_NAME" &
