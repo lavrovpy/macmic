@@ -13,7 +13,7 @@ A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast 
 - Recovers automatically on device hotplug and sleep/wake
 - Microphone gain and mute, headphone-monitoring volume and mute — the same controls as System Settings → Sound, kept in sync with the mic's gain knob and other apps
 - **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Or record up to 30 seconds of yourself and play it back to hear how you sound to others. Use headphones for the live pass-through: speakers in the same room as the mic will feed back (recording and playback don't).
-- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio, Device) for everything else
+- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio) for everything else
 
 Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/completed/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
 
@@ -53,11 +53,10 @@ Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
 - **Open MacMic…** (⌘,) — opens the main window
 - **Quit MacMic**
 
-The main window (also opened by launching the app again from Finder or Launchpad) has three sidebar pages:
+The main window (also opened by launching the app again from Finder or Launchpad) has two sidebar pages:
 
-- **Lighting** — mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
+- **Lighting** — the lighting on/off switch (with a warning above it while the mic isn't found or isn't responding); mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
 - **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa. Below them, **Test Microphone** plays the mic through the system's current default output (it follows you if you switch to AirPods mid-test) and shows an input level meter; while the test runs, **Record** captures up to 30 seconds and **Play** plays the clip back through the same output with the live pass-through muted, the meter following the clip. The clip lives only as long as the test. The first click asks for microphone permission, and if that's denied the page points you at System Settings → Privacy & Security → Microphone.
-- **Device** — lighting and audio connection status and the lighting on/off switch
 
 There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
 
