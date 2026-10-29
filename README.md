@@ -1,145 +1,83 @@
 # MacMic
 
-A native macOS menu bar app that controls the RGB lighting on a HyperX QuadCast S microphone. HyperX only ships NGENUITY for Windows, so without host software the mic just displays its default rainbow — MacMic fills that gap on macOS.
+A native macOS menu bar app for the HyperX QuadCast S — RGB lighting, audio controls, and a live microphone test. HyperX only ships NGENUITY for Windows, leaving the mic on its default rainbow on macOS; MacMic fills that gap.
 
 <p align="center">
   <img src="docs/screenshots/lighting.png" alt="MacMic's Lighting page: lighting on/off switch, Solid / Rainbow Cycle / Blink mode picker, color swatches with RGB sliders and a hex field, and brightness" width="49%">
   <img src="docs/screenshots/audio.png" alt="MacMic's Audio page: microphone gain and mute, Test Microphone with a level meter and Record / Play, and headphone-monitoring volume and mute" width="49%">
 </p>
 
-## Features (v1)
+## Features
 
-- Solid color, edited inline with swatches, RGB sliders, or a hex field
-- Animated presets: **Rainbow Cycle** and **Blink**
-- Brightness control
-- Persists your last color/mode/brightness across launches
-- Recovers automatically on device hotplug and sleep/wake
-- Microphone gain and mute, headphone-monitoring volume and mute — the same controls as System Settings → Sound, kept in sync with the mic's gain knob and other apps
-- **Test Microphone** — hear the mic live through whatever your Mac is currently playing to (AirPods, a headset, speakers) while you adjust the gain, with an input level meter, so you don't have to plug headphones into the mic itself. Or record up to 30 seconds of yourself and play it back to hear how you sound to others. Use headphones for the live pass-through: speakers in the same room as the mic will feed back (recording and playback don't).
-- Menu bar app — no Dock icon; a status menu for quick switches and one window with sidebar navigation (Lighting, Audio) for everything else
+- **RGB lighting** — **Solid** color (preset swatches, RGB sliders, hex input), **Rainbow Cycle**, and multi-color **Blink**, with speed and brightness controls. Settings persist across launches (each mode remembers its own colors and speed) and recover automatically on USB hotplug and sleep/wake.
+- **Audio controls** — Microphone gain & mute and headphone-monitoring volume & mute, backed by Core Audio and kept in live sync with the mic's physical gain knob and System Settings → Sound.
+- **Test Microphone** — Hear the mic live through your Mac's current output (AirPods, headphones, speakers) with an input level meter, or record up to 30 seconds in memory and play it back without plugging headphones into the mic itself. *(Use headphones for live pass-through to avoid speaker feedback.)*
+- **Menu bar app** — Lives in the menu bar with no Dock icon (shows a slashed mic while muted), quick toggles for lighting, mode, and mute, and a single window (`⌘,`) for full Lighting and Audio controls.
 
-Out of scope for v1: per-zone color, wave/lightning/pulse modes, launch-at-login. See [Post-Completion](docs/plans/completed/20260720-macmic-rgb-control.md#post-completion) in the plan for the full list of future ideas.
+## Install & Build
 
-## Install
-
-Requires macOS 13 (Ventura) or later. MacMic is distributed as source; there's no notarized release yet (see Known Limitations). Build it yourself:
+Requires **macOS 13 (Ventura)** or later and Xcode / Swift 5.9+. No notarized release is published yet — build from source:
 
 ```sh
-git clone <this repo>
+git clone https://github.com/lavrovpy/macmic.git
 cd macmic
 ./scripts/make-app.sh
 open dist/MacMic.app
 ```
 
-`scripts/make-app.sh` builds a universal (Apple silicon + Intel) release binary, assembles `dist/MacMic.app` (with an `LSUIElement` `Info.plist` so it never shows a Dock icon), and signs it ad-hoc with the hardened runtime and the microphone entitlement from `scripts/MacMic.entitlements`. A build you made yourself isn't quarantined, so Gatekeeper doesn't get involved; a copy downloaded from someone else's ad-hoc build would need `xattr -dr com.apple.quarantine MacMic.app`.
+`scripts/make-app.sh` builds a universal (`arm64` + `x86_64`) release binary, assembles `dist/MacMic.app`, and ad-hoc signs it with the hardened runtime and microphone entitlement. Copy `dist/MacMic.app` to `/Applications` if you want to keep it installed.
+
+For development and verification:
+
+```sh
+swift test                  # unit test suite
+./scripts/test-make-app.sh  # shellcheck + bundle/signature verification
+```
 
 ### Releasing
 
-`scripts/release.sh` produces a notarized build for GitHub releases and Homebrew. It needs a **Developer ID Application** certificate (an *Apple Development* certificate can't be notarized) and notarytool credentials saved once with `xcrun notarytool store-credentials macmic-notary`:
+With a **Developer ID Application** certificate and `notarytool` credentials stored once (`xcrun notarytool store-credentials macmic-notary`), `scripts/release.sh` signs, notarizes, and staples `dist/MacMic.app`, zips `dist/MacMic-<version>.zip`, and writes the Homebrew cask to `dist/macmic.rb` (for the `lavrovpy/homebrew-tap` tap):
 
 ```sh
 MACMIC_VERSION=1.0.0 \
 MACMIC_SIGN_IDENTITY="Developer ID Application: <name> (<team id>)" \
-scripts/release.sh
+./scripts/release.sh
 ```
 
-It signs, notarizes and staples `dist/MacMic.app`, zips it as `dist/MacMic-<version>.zip`, and writes `dist/macmic.rb`, a Homebrew cask pointing at that zip on the `v<version>` GitHub release. Publish the cask from a tap repository (`lavrovpy/homebrew-tap`, `Casks/macmic.rb`) so users can `brew install --cask lavrovpy/tap/macmic`; the official `homebrew/cask` repository only takes apps that meet its notability thresholds.
+## CLI
 
-## Usage
-
-Launch `MacMic.app`; a mic icon appears in the menu bar. Its menu has:
-
-- Connection status line
-- **Lighting Enabled** — turn streaming on/off without quitting
-- **Mode** submenu — Solid / Rainbow Cycle / Blink
-- **Mute Microphone** — the mic's system input mute (the menu bar icon shows a slashed mic while muted)
-- **Open MacMic…** (⌘,) — opens the main window
-- **Quit MacMic**
-
-The main window (also opened by launching the app again from Finder or Launchpad) has two sidebar pages:
-
-- **Lighting** — the lighting on/off switch (with a warning above it while the mic isn't found or isn't responding); mode picker; for Solid an inline color editor (preset swatches, RGB sliders, hex field); for Blink a list of colors to step through plus speed; for Rainbow Cycle the speed; and brightness. Each mode remembers its own color/speed, so switching modes and back restores what you had.
-- **Audio** — microphone gain and mute, headphone-monitoring volume and mute. These are the mic's system audio controls, so turning the gain knob on the mic or changing the level in Sound settings or another app shows up here live, and vice versa. Below them, **Test Microphone** plays the mic through the system's current default output (it follows you if you switch to AirPods mid-test) and shows an input level meter; while the test runs, **Record** captures up to 30 seconds and **Play** plays the clip back through the same output with the live pass-through muted, the meter following the clip. The clip lives only as long as the test. The first click asks for microphone permission, and if that's denied the page points you at System Settings → Privacy & Security → Microphone.
-
-There's also a CLI, `macmic-cli`, useful for scripting or hardware bring-up diagnostics:
+`macmic-cli` exposes lighting, audio controls, and hardware diagnostics from the terminal:
 
 ```sh
-swift run macmic-cli probe                     # lists matched USB services and which accepts control transfers
-swift run macmic-cli solid FF0000               # stream solid red until Ctrl-C
-swift run macmic-cli solid 00FF00 --brightness 0.5
-swift run macmic-cli cycle --speed 50           # rainbow cycle, speed 0-100
-swift run macmic-cli blink FF0000 0000FF        # blink through a color list
-swift run macmic-cli audio status               # mic gain/mute + monitoring volume/mute
-swift run macmic-cli audio gain 40              # mic gain, 0-100
-swift run macmic-cli audio mute on              # mic mute on|off
-swift run macmic-cli audio monitor 30           # headphone-monitoring volume, 0-100
-swift run macmic-cli audio monitor-mute off     # monitoring mute on|off
-swift run macmic-cli audio test --seconds 10    # play the mic through the default output with a level meter
-swift run macmic-cli audio test --record 3      # same, but record 3 s of the mic, play it back, and exit
+swift run macmic-cli probe                      # check matched USB functions and control transfers
+swift run macmic-cli solid FF0000               # stream solid color until Ctrl-C (--brightness 0.0-1.0)
+swift run macmic-cli cycle --speed 50           # rainbow cycle (--speed 0-100, --brightness 0.0-1.0)
+swift run macmic-cli blink FF0000 0000FF        # blink through colors (--speed 0-100, --brightness 0.0-1.0)
+swift run macmic-cli audio status               # show mic gain/mute and monitoring volume/mute
+swift run macmic-cli audio gain 40              # set mic gain, 0-100 (also: audio mute on|off)
+swift run macmic-cli audio monitor 30           # set monitoring volume, 0-100 (also: audio monitor-mute on|off)
+swift run macmic-cli audio test --seconds 10    # live pass-through + level meter
+swift run macmic-cli audio test --record 3      # record 3 s of the mic, play it back, and exit
 ```
 
-## How it works
+## How It Works
 
-The QuadCast S does **not** persist software-set colors — it only remembers a color while a host keeps streaming frames to it. MacMic runs a resident 55 ms loop that sends a header packet plus a data packet (upper-zone + lower-zone RGB) on every tick for as long as the app is enabled; stop the stream (quit the app, disable it, sleep the Mac) and the mic reverts to its default rainbow.
+- **Lighting (`IOUSBHost`)** — The QuadCast S has no onboard color memory; stopping the stream returns it to its default rainbow. `FrameStreamer` sends precomputed 64-byte header + RGB data packets every 55 ms. Because macOS's `IOHIDManager` cannot reach the mic's `0xFF0B` vendor usage page, `IOUSBHostTransport` seizes the USB device and sends raw `SET_REPORT` control transfers directly to PID `0x171f`.
+- **Audio (`CoreAudio` HAL)** — Gain, mute, and headphone monitoring are standard USB Audio properties on PID `0x171d` (enumerated by macOS as separate 2-channel input and output devices), observed live and tracked independently of the lighting transport.
+- **Test Microphone (`AVAudioEngine`)** — On macOS, `AVAudioEngine`'s input and output share a single HAL unit, so MacMic builds a private aggregate device pairing the QuadCast input with the system default output (rebuilding automatically when the output changes) and taps the input in memory for metering and clip recording.
 
-Frames are generated ahead of time by `PresetSequencer` — a solid color is a one-frame sequence, Rainbow Cycle and Blink are precomputed frame sequences played back on loop — so the loop's job on every tick is just "send the next byte-exact 64-byte packet," never compute one.
+For module architecture, conventions, and full hardware notes, see [`CLAUDE.md`](CLAUDE.md).
 
-On this machine, `IOHIDManager`/`IOHIDDeviceSetReport` cannot reach the QuadCast S's vendor-page (`0xFF0B`) report handler — only a Consumer Control HID service gets matched, and every report ID it accepted structurally was rejected by the device with `kIOReturnError`. The working transport instead issues a raw USB control transfer (the same `SET_REPORT`-shaped request QuadcastRGB sends over libusb) directly against `IOUSBHostDevice`, bypassing the HID class layer entirely. See `Sources/QuadcastKit/HID/IOUSBHostTransport.swift` and the Task 5/6 hardware findings in [the implementation plan](docs/plans/completed/20260720-macmic-rgb-control.md) for the full investigation.
+## Known Limitations
 
-Audio is a separate story: gain, mute and monitoring volume are ordinary Core Audio HAL properties (the same ones System Settings → Sound writes), not part of the vendor USB protocol. The mic shows up as two Core Audio devices — a 2-channel input (the microphone) and a 2-channel output (headphone monitoring) — that MacMic finds by their ModelUID's USB vendor:product and keeps under observation, so a change from the mic's gain knob, Sound settings, or another app is reflected in the UI as it happens. Mute lives on the master element; volume lives per channel, so a write sets both channels together.
+- Tested only on the **HyperX QuadCast S** (VID `0x0951`, PID `0x171f` / `0x171d`); QuadCast 2/2S and DuoCast are untested.
+- Whole-mic color only (upper and lower zones match); no wave, lightning, or pulse presets; no launch-at-login yet.
+- Polar pattern is a physical knob on the microphone and cannot be set in software.
+- Test Microphone pins the mic's sample rate to match the output device (typically 48 kHz). If a Bluetooth headset (e.g. AirPods) is set as the macOS default *input*, starting the test can switch the headset into hands-free mode and interrupt capture — set the QuadCast S as the default input in System Settings → Sound to avoid this.
+- Unsandboxed by necessity (USB device seizure + private aggregate audio devices) and distributed outside the Mac App Store.
 
-Test Microphone is an `AVAudioEngine` pass-through. On macOS the engine's input and output share one HAL unit, so it can't simply be pointed at the mic for input and the default output for output; MacMic instead builds a private aggregate device of the QuadCast input plus the current default output, runs the engine on that, and rebuilds it when the default output changes (so switching to AirPods mid-test is meant to just work). The mic disappearing ends the test, including a re-enumeration of its audio function, which macOS reports as a removal before the mic comes back. Known issue: when a Bluetooth headset's microphone (AirPods) is the system default *input*, starting the test switches the headset to its lower-quality hands-free profile, and the format changes that causes restart the test and cut recordings short; making the QuadCast the default input in System Settings → Sound avoided it with a wired output; with AirPods as the output it hasn't been tried yet. The level meter is the RMS of each input buffer mapped onto -60…0 dBFS. Record/Play reuse that engine: the input tap appends to an in-memory buffer (capped at 30 s, never written to disk), and an `AVAudioPlayerNode` on the same engine plays it back into the mixer with the live input muted. The clip is dropped when the test stops.
+## Credits & License
 
-### Architecture
+The RGB packet layout, timing, and preset formulas in `Sources/QuadcastKit/Protocol/` are ported from [QuadcastRGB](https://github.com/Ors1mer/QuadcastRGB) by Ors1mer (`reference/QuadcastRGB/`).
 
-```
-MacMic (SwiftUI MenuBarExtra, .accessory)
-  └─ AppState (composition root: builds the concerns, sleep/wake)
-       ├─ Lighting (persisted LightingSettings, presence, send retry)
-       ├─ AudioControls (gain/mute, monitoring volume/mute)
-       ├─ MicrophoneTest (Audio page's Test Microphone model)
-       └─ QuadcastKit
-            ├─ FrameStreamer (resident 55 ms loop)
-            ├─ PresetSequencer (LightMode → [Frame])
-            ├─ QuadcastPacket / Frame / RGBColor (pure, byte-exact)
-            ├─ HIDTransport (protocol) — lighting
-            │    ├─ IOUSBHostTransport (raw USB control transfer — the working path)
-            │    └─ MockHIDTransport (tests)
-            ├─ AudioDeviceControl (protocol) — gain/mute, monitoring volume/mute
-            │    ├─ CoreAudioDeviceControl (Core Audio HAL)
-            │    └─ MockAudioDeviceControl (tests)
-            └─ MicrophoneTestSession — Test Microphone pass-through + level meter + record/playback
-                 └─ MicrophoneEngine (internal protocol)
-                      ├─ AVAudioEngineMicrophoneEngine (AVAudioEngine on a private aggregate device)
-                      └─ ScriptedMicrophoneEngine (tests)
-macmic-cli (probe / solid / cycle / blink / audio)
-  └─ MicrophoneTestRun (audio test)
-```
-
-## Credits
-
-The protocol layer (`Sources/QuadcastKit/Protocol/`, and the report-submission shape in `Sources/QuadcastKit/HID/`) is a Swift port of [QuadcastRGB](https://github.com/Ors1mer/QuadcastRGB) by Ors1mer, vendored for reference at `reference/QuadcastRGB/`. Byte layouts, frame timing, and cycle/blink sequencing formulas come directly from that project's `modules/devio.c` and `modules/rgbmodes.c`.
-
-## License
-
-GPLv2-only, matching the upstream QuadcastRGB license. See [LICENSE](LICENSE).
-
-## Contributing
-
-Pull requests targeting `main` are reviewed by [CodeRabbit](https://www.coderabbit.ai/oss), which is free for public repositories. Review behavior lives in [`.coderabbit.yaml`](.coderabbit.yaml); project conventions in `CLAUDE.md` are picked up automatically.
-
-The GitHub App has to be [installed on this repository](https://github.com/apps/coderabbitai) once (choose **Only select repositories** → `macmic`). After that, CodeRabbit comments on new PRs. Public repos with fewer than 10 stars need a manual first review: comment `@coderabbitai review` on the PR, or `@coderabbitai full review` for a from-scratch pass.
-
-## Known limitations (v1)
-
-- No per-zone color control (upper/lower zones always match)
-- No wave, lightning, or pulse modes
-- No launch-at-login
-- Polar pattern is a physical knob on the QuadCast S and cannot be set by software
-- Audio gain/mute are not restored on reconnect — the device and macOS remember them, and restoring a saved value would fight the mic's gain knob and every other app; a "remember and restore" option is a possible future feature
-- Whether muting from MacMic lights the mic's red mute LED has not yet been checked with eyes on the mic
-- Test Microphone pins the mic's sample rate to the output's (typically 48 kHz) and leaves it there after the test; it has been verified to start, run and meter the input, but nobody has yet listened to confirm the pass-through is audible
-- Recovery from a failing USB send is retried every ≤10 s, so lighting can take up to 10 s to come back after the device accepts frames again; this path hasn't been seen on hardware (a second process can't take the device from a running MacMic to provoke it) and is covered only by `LightingTests`
-- No Developer ID-signed, notarized release published yet; `scripts/release.sh` builds one once a Developer ID certificate is available
-- Only tested against the QuadCast S (VID `0x0951`, PID `0x171f`/`0x171d`); QuadCast 2/2S and DuoCast are untested
-- Unsandboxed: MacMic seizes the mic's USB device from the kernel HID driver and creates a private aggregate audio device, neither verified to work inside the App Sandbox that the Mac App Store requires; the GPLv2 license (including the ported QuadcastRGB code) is also generally considered incompatible with App Store terms
+Licensed under **GPLv2-only**, matching upstream QuadcastRGB. See [LICENSE](LICENSE).
