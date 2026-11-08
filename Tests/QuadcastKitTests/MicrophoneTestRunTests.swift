@@ -104,7 +104,7 @@ final class RecordingTerminal: TestTerminal {
         #expect(harness.terminal.entries.isEmpty)
 
         harness.fixture.scheduler.advance(by: 0.2)
-        #expect(harness.terminal.errors == ["audio test: no QuadCast microphone input device found"])
+        #expect(harness.terminal.errors == ["audio test: no HyperX microphone input device found"])
         #expect(harness.terminal.lines.isEmpty)
         #expect(harness.codes == [1])
         #expect(harness.fixture.engine.calls.isEmpty)

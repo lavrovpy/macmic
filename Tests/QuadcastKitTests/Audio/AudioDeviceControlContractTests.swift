@@ -203,6 +203,24 @@ private final class MockHarness: ControlHarness {
     }
 
     @Test(arguments: ControlKind.allCases)
+    func presentDevicesAreNamedAndUnavailableIsNot(_ kind: ControlKind) throws {
+        let harness = makeHarness(kind)
+        harness.plugBoth()
+        let recorder = DeliveryRecorder(observing: harness.control)
+        try harness.control.open()
+        harness.settle()
+
+        #expect(harness.control.snapshot.deviceName == "HyperX QuadCast S")
+        #expect(recorder.last?.deviceName == "HyperX QuadCast S")
+
+        harness.unplugAll()
+        harness.settle()
+
+        #expect(harness.control.snapshot.deviceName == nil)
+        #expect(recorder.last?.deviceName == nil)
+    }
+
+    @Test(arguments: ControlKind.allCases)
     func cancelledObservationReceivesNothing(_ kind: ControlKind) throws {
         let harness = makeHarness(kind)
         harness.plugBoth()

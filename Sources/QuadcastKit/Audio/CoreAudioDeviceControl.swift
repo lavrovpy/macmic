@@ -10,28 +10,28 @@ import CoreAudio
 import Dispatch
 import Foundation
 
-/// `AudioDeviceControl` backed by the Core Audio HAL: finds the QuadCast S's
-/// two audio devices (microphone input, headphone-monitoring output), keeps
-/// their mute/volume properties under observation, and writes them.
+/// `AudioDeviceControl` backed by the Core Audio HAL: finds a supported mic's
+/// audio devices (microphone input, headphone-monitoring output), keeps
+/// their mute/volume properties under observation, and writes them. A model
+/// may expose one device serving both directions or, like the Kingston
+/// QuadCast S, one device per direction.
 ///
-/// Matching uses `kAudioDevicePropertyModelUID`, which carries the USB
-/// vendor:product (`...:0951:171D`); the device *name* is only a fallback
-/// because it's user-visible text. The audio function is the `0x171d` USB
-/// function — the one that rejects lighting control transfers — so audio
-/// presence and `HIDTransport` presence are tracked independently.
+/// Matching resolves the trailing vendor:product of
+/// `kAudioDevicePropertyModelUID` (`...:0951:171D`) through `QuadcastCatalog`;
+/// the device *name* is only a fallback, for a device reporting no ModelUID,
+/// because it's user-visible text. The audio side is a different USB
+/// function from the lighting one on the known models, so audio presence and
+/// `HIDTransport` presence are tracked independently.
 ///
 /// Volume lives on elements `1...channelCount` (per channel), not on the
-/// main element 0, which this device doesn't expose for volume; mute is on
-/// element 0 only. Every write sets all channels to the same value and every
+/// main element 0, which the Kingston QuadCast S doesn't expose for volume;
+/// mute is on element 0 only. Every write sets all channels to the same value and every
 /// read takes channel 1.
 ///
 /// Internal state is confined to a private serial queue, where the HAL
 /// listeners also run. Observers run on `callbackQueue` (`.main` in
 /// production).
 public final class CoreAudioDeviceControl: AudioDeviceControl {
-    static let usbVendorID = 0x0951
-    static let usbProductID = 0x171d
-    static let modelUIDSuffix = ":0951:171d"
     static let fallbackDeviceName = "HyperX QuadCast S"
 
     /// One HAL device's identity and per-scope channel counts, as read by
@@ -49,6 +49,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     private struct TrackedDevice {
         let id: AudioObjectID
         let channelCount: Int
+        let name: String
     }
 
     /// Per-device listeners to drop and to register after a rescan, keyed by
@@ -166,13 +167,17 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
 
     // MARK: - Direction assignment
 
-    /// `true` for a ModelUID carrying the QuadCast S's USB vendor:product;
-    /// the user-visible name is consulted only when no ModelUID is reported.
-    private static func isQuadcast(modelUID: String?, name: String?) -> Bool {
-        if let modelUID {
-            return modelUID.lowercased().hasSuffix(modelUIDSuffix)
+    /// The display name of a supported mic's device, `nil` for any other.
+    /// The user-visible name is consulted only when no ModelUID is reported,
+    /// and then only as an exact match.
+    private static func displayName(of device: EnumeratedDevice) -> String? {
+        guard let modelUID = device.modelUID else {
+            return device.name == fallbackDeviceName ? fallbackDeviceName : nil
         }
-        return name == fallbackDeviceName
+        // Any role: a model whose lighting and audio share one USB device
+        // reports the lighting PID here.
+        guard let function = QuadcastCatalog.function(modelUID: modelUID) else { return nil }
+        return QuadcastCatalog.displayName(reported: device.name, for: function)
     }
 
     /// Which directions a device serves, from its per-scope channel counts.
@@ -184,17 +189,18 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     }
 
     /// Picks the device for each direction from an enumeration pass: only
-    /// QuadCast devices (`isQuadcast`) are considered, a device serves every
+    /// supported mics' devices (`displayName(of:)`) are considered, a device serves every
     /// direction it has channels for, and when two devices could serve the
     /// same direction the first enumerated wins (the HAL lists devices in a
     /// stable order, so this stays pinned across rescans).
     private static func assignDirections(_ devices: [EnumeratedDevice]) -> [AudioDirection: TrackedDevice] {
         var assigned: [AudioDirection: TrackedDevice] = [:]
-        for device in devices where isQuadcast(modelUID: device.modelUID, name: device.name) {
+        for device in devices {
+            guard let name = displayName(of: device) else { continue }
             for direction in directions(inputChannels: device.inputChannels, outputChannels: device.outputChannels)
             where assigned[direction] == nil {
                 let channelCount = direction == .input ? device.inputChannels : device.outputChannels
-                assigned[direction] = TrackedDevice(id: device.id, channelCount: channelCount)
+                assigned[direction] = TrackedDevice(id: device.id, channelCount: channelCount, name: name)
             }
         }
         return assigned
@@ -205,7 +211,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     /// listener is identified by (direction, object id): an id that keeps
     /// serving the same direction is left alone, one that moved to another
     /// direction is re-registered under the new scope, and a `channelCount`
-    /// change on its own is not a listener change.
+    /// or name change on its own is not a listener change.
     private static func listenerDiff(
         previous: [AudioDirection: TrackedDevice],
         current: [AudioDirection: TrackedDevice]
@@ -283,7 +289,7 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     }
 
     /// Re-reads every tracked direction and schedules a delivery only if
-    /// levels or device ids changed — which also swallows the HAL's echo of
+    /// levels, device ids or the name changed — which also swallows the HAL's echo of
     /// this object's own writes.
     private func refreshSnapshot() {
         let current = readSnapshot()
@@ -304,13 +310,16 @@ public final class CoreAudioDeviceControl: AudioDeviceControl {
     }
 
     /// A direction gets a device id only when its mute and volume reads
-    /// succeeded.
+    /// succeeded; the name comes from the first such direction, input first.
     private func readSnapshot() -> AudioDeviceSnapshot {
         var snapshot = AudioDeviceSnapshot.unavailable
         for direction in AudioDirection.allCases {
             guard let device = tracked[direction], let level = readLevel(device, direction) else { continue }
             snapshot[direction] = level
             snapshot.deviceIDs[direction] = device.id
+            if snapshot.deviceName == nil {
+                snapshot.deviceName = device.name
+            }
         }
         return snapshot
     }

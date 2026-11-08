@@ -15,13 +15,14 @@ import IOKit
 /// call to fail, without touching real hardware. Tracks matched functions in
 /// the same `QuadcastFunctionSet` as `IOUSBHostTransport`, so the
 /// one-mic-two-functions rules are the production ones: removal is reported
-/// once every function is gone, and a send succeeds only while `0x171f` is
-/// matched (with `0x171d` alone it fails with `kIOReturnError`, as on
-/// hardware). Each product id is its own entry id here; callbacks fire
-/// synchronously on the caller. `sentReports` and `sendAttempts` may be read
+/// once every function is gone, and a send succeeds only while a
+/// lighting-role function is matched (with `0x171d` alone it fails with
+/// `kIOReturnError`, as on hardware). The entry id is `vendorID << 16 |
+/// productID`; callbacks fire synchronously on the caller. `sentReports` and `sendAttempts` may be read
 /// while a real-timer streamer sends from its own queue.
 final class MockHIDTransport: HIDTransport {
-    var onDeviceConnected: (() -> Void)?
+    var onDeviceConnected: ((String) -> Void)?
+    var onDeviceNameChanged: ((String) -> Void)?
     var onDeviceRemoved: (() -> Void)?
 
     var sentReports: [[UInt8]] {
@@ -89,7 +90,7 @@ final class MockHIDTransport: HIDTransport {
             throw HIDTransportError.deviceNotFound
         }
         guard let accepting = candidates.first(where: {
-            $0.productID == QuadcastFunctionSet<Int>.preferredProductID
+            QuadcastCatalog.function(vendorID: $0.vendorID, productID: $0.productID)?.role == .lighting
         }) else {
             throw HIDTransportError.sendFailed(kIOReturnError)
         }
@@ -99,18 +100,28 @@ final class MockHIDTransport: HIDTransport {
         lock.unlock()
     }
 
-    /// Simulates one QuadCast USB function being matched.
-    func simulateConnect(productID: Int = 0x171f) {
-        functions.insert(productID, entryID: UInt64(productID), productID: productID)
-        onDeviceConnected?()
+    /// Simulates one USB function being matched.
+    func simulateConnect(
+        vendorID: Int = QuadcastCatalog.kingstonVendorID, productID: Int = 0x171f,
+        productName: String? = "HyperX QuadCast S"
+    ) {
+        functions.insert(
+            productID, entryID: Self.entryID(vendorID, productID),
+            vendorID: vendorID, productID: productID, productName: productName
+        )
+        onDeviceConnected?(functions.displayName ?? QuadcastCatalog.genericName)
     }
 
     /// Simulates one USB function terminating; `onDeviceRemoved` fires only
-    /// if it was the last one.
-    func simulateRemoval(productID: Int) {
-        guard let removal = functions.remove(entryID: UInt64(productID)) else { return }
+    /// if it was the last one, else `onDeviceNameChanged` if the set's name
+    /// changed.
+    func simulateRemoval(vendorID: Int = QuadcastCatalog.kingstonVendorID, productID: Int) {
+        let previousName = functions.displayName
+        guard let removal = functions.remove(entryID: Self.entryID(vendorID, productID)) else { return }
         if removal.isEmpty {
             onDeviceRemoved?()
+        } else if let name = functions.displayName, name != previousName {
+            onDeviceNameChanged?(name)
         }
     }
 
@@ -119,5 +130,9 @@ final class MockHIDTransport: HIDTransport {
         guard !functions.isEmpty else { return }
         _ = functions.removeAll()
         onDeviceRemoved?()
+    }
+
+    private static func entryID(_ vendorID: Int, _ productID: Int) -> UInt64 {
+        UInt64(vendorID) << 16 | UInt64(productID)
     }
 }

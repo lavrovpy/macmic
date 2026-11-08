@@ -47,7 +47,7 @@ final class StandardTerminal: TestTerminal {
     }
 }
 
-/// One `audio test` run: waits for the QuadCast input, starts the session,
+/// One `audio test` run: waits for the mic's input, starts the session,
 /// prints every phase change and a meter while running, and in
 /// `recordThenPlay` records once running, then plays the clip back. Calls
 /// `finish` exactly once, after stopping the session; never calls `exit()`.
@@ -101,7 +101,7 @@ final class MicrophoneTestRun {
         guard session.status.isInputAvailable else {
             inputWaitWork = scheduler.schedule(after: Self.inputWait) { [weak self] in
                 guard let self, self.step == .waitingForInput else { return }
-                self.terminal.error("audio test: no QuadCast microphone input device found")
+                self.terminal.error("audio test: no HyperX microphone input device found")
                 self.finish(1)
             }
             return

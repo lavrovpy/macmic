@@ -55,6 +55,17 @@ import Testing
         #expect(before.isIdentical(to: sample) == false)
         #expect(before.isIdentical(to: changed) == false)
     }
+
+    @Test func deviceNameIsIdentityNotLevels() {
+        let sample = AudioDeviceSnapshot.sample
+        let ids: [AudioDirection: AudioObjectID] = [.input: 70, .output: 74]
+        let named = AudioDeviceSnapshot(input: sample.input, output: sample.output, deviceIDs: ids, deviceName: "HyperX QuadCast S")
+        let renamed = AudioDeviceSnapshot(input: sample.input, output: sample.output, deviceIDs: ids, deviceName: "HyperX QuadCast 2")
+
+        #expect(named == renamed)
+        #expect(named.isIdentical(to: renamed) == false)
+        #expect(AudioDeviceSnapshot.unavailable.deviceName == nil)
+    }
 }
 
 /// Mock-only behaviour; the contract it shares with the production control

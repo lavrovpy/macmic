@@ -30,8 +30,8 @@ final class AudioControls: ObservableObject {
     /// change arrives.
     static let echoTolerance: Float = 0.01
 
-    /// Reconciled; a delivery whose levels equal the current ones (e.g. an
-    /// id-only re-enumeration) doesn't publish.
+    /// Reconciled; a delivery whose levels and name equal the current ones
+    /// (e.g. an id-only re-enumeration) doesn't publish.
     @Published private(set) var snapshot: AudioDeviceSnapshot
 
     private let control: AudioDeviceControl
@@ -83,9 +83,16 @@ final class AudioControls: ObservableObject {
         snapshot.isAvailable
     }
 
+    /// The connected mic's name as Core Audio reports it; `nil` while absent.
+    var deviceName: String? {
+        snapshot.deviceName
+    }
+
     /// The audio counterpart of `Lighting.statusText`.
     var statusText: String {
-        isAvailable ? "Audio device connected" : "Audio device not found"
+        isAvailable
+            ? "\(deviceName ?? QuadcastCatalog.genericName) audio connected"
+            : "No HyperX microphone audio device found"
     }
 
     var micGainText: String {
@@ -134,7 +141,8 @@ final class AudioControls: ObservableObject {
     /// assignments too, so a direct `snapshot =` re-renders every observer
     /// on an id-only re-enumeration.
     private func update(_ next: AudioDeviceSnapshot) {
-        guard next != snapshot else { return }
+        // `==` compares levels only; the name is identity but shown.
+        guard next != snapshot || next.deviceName != snapshot.deviceName else { return }
         snapshot = next
     }
 

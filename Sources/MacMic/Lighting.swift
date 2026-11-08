@@ -34,9 +34,13 @@ final class Lighting: ObservableObject {
         }
     }
 
-    /// A QuadCast USB function is matched. Set only from the transport's
+    /// A supported USB function is matched. Set only from the transport's
     /// callbacks, never assumed from `open()` succeeding.
     @Published private(set) var isDevicePresent = false
+
+    /// The connected mic's name from the transport's latest connect or
+    /// rename; `nil` while not present.
+    @Published private(set) var deviceName: String?
 
     /// The latest run failed while lighting should be on; cleared by the
     /// next first frame sent, unplug, disable or sleep.
@@ -48,10 +52,11 @@ final class Lighting: ObservableObject {
     }
 
     var statusText: String {
+        let name = deviceName ?? QuadcastCatalog.genericName
         switch status {
-        case .notFound: return "QuadCast S not found"
-        case .connected: return "QuadCast S connected"
-        case .notResponding: return "QuadCast S not responding — retrying"
+        case .notFound: return "No HyperX microphone found for lighting"
+        case .connected: return "\(name) connected"
+        case .notResponding: return "\(name) not responding — retrying"
         }
     }
 
@@ -84,7 +89,8 @@ final class Lighting: ObservableObject {
 
         streamer.onError = { [weak self] _ in self?.streamerDidFail() }
         streamer.onFirstFrameSent = { [weak self] in self?.streamerDidSendFirstFrame() }
-        transport.onDeviceConnected = { [weak self] in self?.deviceDidConnect() }
+        transport.onDeviceConnected = { [weak self] name in self?.deviceDidConnect(name: name) }
+        transport.onDeviceNameChanged = { [weak self] name in self?.deviceWasRenamed(name) }
         transport.onDeviceRemoved = { [weak self] in self?.deviceWasRemoved() }
         try? transport.open()
     }
@@ -122,17 +128,27 @@ final class Lighting: ObservableObject {
         streamer.start()
     }
 
-    private func deviceDidConnect() {
+    private func deviceDidConnect(name: String) {
         dispatchPrecondition(condition: .onQueue(.main))
+        if deviceName != name {
+            deviceName = name
+        }
         if !isDevicePresent {
             isDevicePresent = true
         }
         apply()
     }
 
+    private func deviceWasRenamed(_ name: String) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isDevicePresent, deviceName != name else { return }
+        deviceName = name
+    }
+
     private func deviceWasRemoved() {
         dispatchPrecondition(condition: .onQueue(.main))
         isDevicePresent = false
+        deviceName = nil
         apply()
     }
 

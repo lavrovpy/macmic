@@ -104,6 +104,51 @@ import Testing
         #expect(fixture.lighting.controlsEnabled == true)
     }
 
+    @Test func deviceNameComesFromTheTransportAndClearsOnUnplug() {
+        let fixture = LightingFixture()
+        #expect(fixture.lighting.deviceName == "HyperX QuadCast S")
+
+        fixture.transport.simulateUnplug()
+        #expect(fixture.lighting.deviceName == nil)
+
+        fixture.transport.simulateConnect(vendorID: 0x03f0, productID: 0x09af, productName: "HyperX QuadCast 2")
+        #expect(fixture.lighting.deviceName == "HyperX QuadCast 2")
+    }
+
+    /// Two mics plugged in: the set names the lighting function with the
+    /// lower entry id (the HP one in the mock). Unplugging that mic leaves
+    /// the Kingston present, and the name must follow it.
+    @Test func unpluggingOneOfTwoMicsRenamesToTheRemainingOne() {
+        let fixture = LightingFixture()
+        fixture.transport.simulateConnect(vendorID: 0x03f0, productID: 0x09af, productName: "HyperX QuadCast 2")
+        #expect(fixture.lighting.deviceName == "HyperX QuadCast 2")
+
+        fixture.transport.simulateRemoval(vendorID: 0x03f0, productID: 0x09af)
+
+        #expect(fixture.lighting.isDevicePresent == true)
+        #expect(fixture.lighting.deviceName == "HyperX QuadCast S")
+        #expect(fixture.lighting.statusText == "HyperX QuadCast S connected")
+    }
+
+    /// An HP mic has one lighting function on the transport (its audio
+    /// function isn't matched), so that function's removal is the unplug.
+    @Test func hpLightingFunctionAloneStreamsAndItsRemovalDisconnects() {
+        let transport = MockHIDTransport()
+        transport.autoConnectOnOpen = false
+        let fixture = LightingFixture(transport: transport)
+
+        transport.simulateConnect(vendorID: 0x03f0, productID: 0x028c)
+        fixture.tick(1)
+
+        #expect(fixture.lighting.status == .connected)
+        #expect(transport.sentReports.last == frame(LightingSettings.defaultColor))
+
+        transport.simulateRemoval(vendorID: 0x03f0, productID: 0x028c)
+
+        #expect(fixture.lighting.isDevicePresent == false)
+        #expect(fixture.lighting.status == .notFound)
+    }
+
     @Test func unplugStopsStreamingAndReplugResumesLastSettings() {
         let fixture = LightingFixture()
         let color = RGBColor(r: 9, g: 9, b: 9)
@@ -384,14 +429,27 @@ import Testing
 
     @Test func statusTextPerState() {
         let fixture = LightingFixture()
-        #expect(fixture.lighting.statusText == "QuadCast S connected")
+        #expect(fixture.lighting.statusText == "HyperX QuadCast S connected")
 
         fixture.transport.nextSendError = .sendFailed(-1)
         fixture.tick(1)
-        #expect(fixture.lighting.statusText == "QuadCast S not responding — retrying")
+        #expect(fixture.lighting.statusText == "HyperX QuadCast S not responding — retrying")
 
         fixture.transport.simulateUnplug()
-        #expect(fixture.lighting.statusText == "QuadCast S not found")
+        #expect(fixture.lighting.statusText == "No HyperX microphone found for lighting")
+    }
+
+    @Test func statusTextNamesTheConnectedModel() {
+        let transport = MockHIDTransport()
+        transport.autoConnectOnOpen = false
+        let fixture = LightingFixture(transport: transport)
+
+        transport.simulateConnect(vendorID: 0x03f0, productID: 0x09af, productName: "HyperX QuadCast 2")
+        #expect(fixture.lighting.statusText == "HyperX QuadCast 2 connected")
+
+        transport.nextSendError = .sendFailed(-1)
+        fixture.tick(1)
+        #expect(fixture.lighting.statusText == "HyperX QuadCast 2 not responding — retrying")
     }
 
     // MARK: Persistence

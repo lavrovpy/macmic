@@ -306,6 +306,23 @@ import Testing
         #expect(changes == 1)
     }
 
+    @Test func deviceNameFollowsTheControl() throws {
+        let (mock, controls) = try makeControls()
+        #expect(controls.deviceName == "HyperX QuadCast S")
+        var changes = 0
+        let subscription = controls.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+
+        mock.deviceName = "HyperX QuadCast 2"
+        mock.simulateReenumeration()
+
+        #expect(controls.deviceName == "HyperX QuadCast 2")
+        #expect(changes == 1)
+
+        mock.simulateDeviceRemoved()
+        #expect(controls.deviceName == nil)
+    }
+
     // MARK: UI text
 
     @Test func levelTextFormatsPercentAndDecibels() throws {
@@ -320,12 +337,12 @@ import Testing
 
     @Test func statusTextReflectsAvailability() throws {
         let (mock, controls) = try makeControls()
-        #expect(controls.statusText == "Audio device connected")
+        #expect(controls.statusText == "HyperX QuadCast S audio connected")
 
         mock.simulateDeviceRemoved()
-        #expect(controls.statusText == "Audio device not found")
+        #expect(controls.statusText == "No HyperX microphone audio device found")
 
         mock.simulateDeviceAppeared(AudioDeviceSnapshot(input: nil, output: AudioDeviceSnapshot.sample.output))
-        #expect(controls.statusText == "Audio device connected")
+        #expect(controls.statusText == "HyperX QuadCast S audio connected")
     }
 }

@@ -9,9 +9,10 @@
 import CoreAudio
 import Foundation
 
-/// Which of the QuadCast S's two Core Audio devices a control belongs to:
-/// `.input` is the microphone (gain + mic mute), `.output` is the
-/// headphone-monitoring output (volume + monitor mute).
+/// Which side of the mic's audio a control belongs to: `.input` is the
+/// microphone (gain + mic mute), `.output` is the headphone-monitoring output
+/// (volume + monitor mute). A model may serve both from one Core Audio device
+/// or, like the Kingston QuadCast S, from two.
 public enum AudioDirection: CaseIterable, Sendable {
     case input, output
 }
@@ -41,8 +42,11 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
     /// snapshot (set by `CoreAudioDeviceControl` and the test mock; empty
     /// when built with the public init). Reassigned on every re-enumeration.
     var deviceIDs: [AudioDirection: AudioObjectID] = [:]
+    /// The connected mic's display name: the input device's name, else the
+    /// output device's; `nil` when unavailable. Identity, like `deviceIDs`.
+    public internal(set) var deviceName: String?
 
-    /// No QuadCast audio device present in either direction.
+    /// No supported mic's audio device present in either direction.
     public static let unavailable = AudioDeviceSnapshot(input: nil, output: nil)
 
     public init(input: AudioLevel?, output: AudioLevel?) {
@@ -50,26 +54,32 @@ public struct AudioDeviceSnapshot: Equatable, Sendable {
         self.output = output
     }
 
-    init(input: AudioLevel?, output: AudioLevel?, deviceIDs: [AudioDirection: AudioObjectID]) {
+    init(
+        input: AudioLevel?,
+        output: AudioLevel?,
+        deviceIDs: [AudioDirection: AudioObjectID],
+        deviceName: String? = nil
+    ) {
         self.input = input
         self.output = output
         self.deviceIDs = deviceIDs
+        self.deviceName = deviceName
     }
 
     /// Levels only — the app's view. QuadcastKit code that must see
     /// re-enumerations uses `isIdentical(to:)`.
     ///
     /// Stored properties are listed by hand; `isIdentical(to:)` is this plus
-    /// `deviceIDs`. Add a new level/state property here (`isIdentical` then
+    /// `deviceIDs` and `deviceName`. Add a new level/state property here (`isIdentical` then
     /// covers it); add a new identity property to `isIdentical` only — never
     /// here, or id-only re-enumerations start publishing in the app.
     public static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.input == rhs.input && lhs.output == rhs.output
     }
 
-    /// Levels and device ids.
+    /// Levels, device ids and name.
     func isIdentical(to other: Self) -> Bool {
-        self == other && deviceIDs == other.deviceIDs
+        self == other && deviceIDs == other.deviceIDs && deviceName == other.deviceName
     }
 
     public var isAvailable: Bool {
@@ -115,7 +125,7 @@ public final class AudioDeviceObservation {
     }
 }
 
-/// Abstraction over the QuadCast S's Core Audio volume/mute controls (the
+/// Abstraction over the mic's Core Audio volume/mute controls (the
 /// same properties macOS Sound settings drive), so the app and the CLI can
 /// be tested without real hardware. `CoreAudioDeviceControl` is the
 /// production adapter; `MockAudioDeviceControl` (test target) is used in
@@ -128,8 +138,8 @@ public protocol AudioDeviceControl: AnyObject {
     /// Registers `handler` for every delivery, in registration order, on the
     /// main queue. A delivery is the latest snapshot whenever levels, mute,
     /// presence or a tracked device id changed since the previous delivery:
-    /// a QuadCast device appearing/disappearing, a re-enumeration under new
-    /// ids even with identical levels, an external change, the echo of this
+    /// a mic's device appearing/disappearing, a re-enumeration under new
+    /// ids even with identical levels, a rename, an external change, the echo of this
     /// object's own writes. Every successful write is followed by a delivery
     /// even if its value equals the previous one (another process may have
     /// reverted the write first). Bursts may coalesce; a delivery never
@@ -198,7 +208,7 @@ final class AudioObservers {
 
 /// Errors surfaced by `AudioDeviceControl` implementations.
 public enum AudioDeviceControlError: Error, Equatable {
-    /// No QuadCast Core Audio device is present for the requested direction.
+    /// No supported mic's Core Audio device is present for the requested direction.
     case deviceNotFound(AudioDirection)
     /// Registering the Core Audio device-list listener failed with this status.
     case openFailed(OSStatus)

@@ -24,10 +24,4 @@ import Testing
         #expect(IOUSBHostTransport.makeControlRequest(payloadLength: 60).wLength == 60)
         #expect(IOUSBHostTransport.makeControlRequest(payloadLength: 64).wLength == 64)
     }
-
-    @Test func vendorAndProductIDsMatchProtocolSpec() {
-        #expect(IOUSBHostTransport.vendorID == 0x0951)
-        #expect(IOUSBHostTransport.productIDs == [0x171f, 0x171d])
-        #expect(QuadcastFunctionSet<Void>.preferredProductID == 0x171f)
-    }
 }
