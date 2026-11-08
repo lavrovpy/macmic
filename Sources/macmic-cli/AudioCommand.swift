@@ -101,16 +101,19 @@ func parseOnOff(_ text: String) -> Bool? {
     }
 }
 
-/// Two lines, e.g.
+/// One line per direction, e.g.
 ///
 ///     input  (microphone): gain 68% (+2.1 dB), mute off
 ///     output (monitoring): volume 81% (-12.1 dB), mute off
 ///
-/// An absent direction prints `not found`.
+/// An absent direction prints `not found`. A named snapshot starts with a
+/// `device: <name>` line.
 func formatAudioStatus(_ snapshot: AudioDeviceSnapshot) -> String {
     let input = formatLevel(snapshot.input, valueName: "gain")
     let output = formatLevel(snapshot.output, valueName: "volume")
-    return "input  (microphone): \(input)\noutput (monitoring): \(output)"
+    let levels = "input  (microphone): \(input)\noutput (monitoring): \(output)"
+    guard let name = snapshot.deviceName else { return levels }
+    return "device: \(name)\n" + levels
 }
 
 private func formatLevel(_ level: AudioLevel?, valueName: String) -> String {

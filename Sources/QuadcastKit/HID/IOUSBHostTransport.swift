@@ -10,11 +10,21 @@ import Foundation
 import IOKit
 import IOUSBHost
 
-/// One matched QuadCast USB device's response to a header-packet control
+/// One matched USB function's response to a header-packet control
 /// transfer, as reported by `IOUSBHostTransport.probe()`.
 public struct USBProbeResult: Equatable {
+    public let vendorID: Int
     public let productID: Int
+    /// The device's own USB product string, if it reports one.
+    public let productName: String?
     public let ioReturn: IOReturn
+
+    public init(vendorID: Int, productID: Int, productName: String?, ioReturn: IOReturn) {
+        self.vendorID = vendorID
+        self.productID = productID
+        self.productName = productName
+        self.ioReturn = ioReturn
+    }
 
     public var succeeded: Bool { ioReturn == kIOReturnSuccess }
 }
@@ -32,14 +42,16 @@ public struct USBProbeResult: Equatable {
 /// the USB device: `bmRequestType 0x21` (host-to-device, class, interface),
 /// `bRequest 0x09` (SET_REPORT), `wValue 0x0300` (Feature report, report ID
 /// 0), `wIndex 0x0000`, a 64-byte payload, 1 s timeout.
+///
+/// It matches every `QuadcastCatalog` function with
+/// `isMatchedByLightingTransport`, and sends all of them the same control
+/// request: upstream uses identical code for every model in the catalog.
+/// `QuadcastFunctionSet` decides which function takes the transfer and when
+/// removal is reported.
 public final class IOUSBHostTransport: HIDTransport {
-    public var onDeviceConnected: (() -> Void)?
+    public var onDeviceConnected: ((_ deviceName: String) -> Void)?
+    public var onDeviceNameChanged: ((_ deviceName: String) -> Void)?
     public var onDeviceRemoved: (() -> Void)?
-
-    static let vendorID = 0x0951
-    /// Both functions of one mic; see `QuadcastFunctionSet` for which one
-    /// takes the control transfer and how removal is reported.
-    static let productIDs = [0x171f, 0x171d]
 
     private static let bmRequestType: UInt8 = 0x21
     private static let bRequest: UInt8 = 0x09
@@ -49,8 +61,8 @@ public final class IOUSBHostTransport: HIDTransport {
 
     private let queue = DispatchQueue(label: "dev.alavreniuk.macmic.usbhost-transport")
     private var notificationPort: IONotificationPortRef?
-    private var matchIterator: io_iterator_t = 0
-    private var removalIterator: io_iterator_t = 0
+    private var matchIterators: [io_iterator_t] = []
+    private var removalIterators: [io_iterator_t] = []
     private var functions = QuadcastFunctionSet<IOUSBHostDevice>()
 
     public init() {}
@@ -63,30 +75,43 @@ public final class IOUSBHostTransport: HIDTransport {
         IONotificationPortSetDispatchQueue(port, queue)
 
         let context = Unmanaged.passUnretained(self).toOpaque()
+        // IOKit matching takes a single idVendor per dictionary, so this
+        // registers one notification of each kind per vendor.
+        let vendors = QuadcastCatalog.lightingTransportProductIDs.sorted { $0.key < $1.key }
 
-        let matchResult = IOServiceAddMatchingNotification(
-            port, kIOFirstMatchNotification, Self.makeMatchingDictionary(),
-            { context, iterator in
-                guard let context else { return }
-                Unmanaged<IOUSBHostTransport>.fromOpaque(context).takeUnretainedValue().handleMatched(iterator)
-            }, context, &matchIterator
-        )
-        guard matchResult == kIOReturnSuccess else {
-            throw HIDTransportError.openFailed(matchResult)
+        for (vendorID, productIDs) in vendors {
+            var iterator: io_iterator_t = 0
+            let result = IOServiceAddMatchingNotification(
+                port, kIOFirstMatchNotification,
+                Self.makeMatchingDictionary(vendorID: vendorID, productIDs: productIDs),
+                { context, iterator in
+                    guard let context else { return }
+                    Unmanaged<IOUSBHostTransport>.fromOpaque(context).takeUnretainedValue().handleMatched(iterator)
+                }, context, &iterator
+            )
+            guard result == kIOReturnSuccess else {
+                throw HIDTransportError.openFailed(result)
+            }
+            matchIterators.append(iterator)
+            handleMatched(iterator)
         }
-        handleMatched(matchIterator)
 
-        let removalResult = IOServiceAddMatchingNotification(
-            port, kIOTerminatedNotification, Self.makeMatchingDictionary(),
-            { context, iterator in
-                guard let context else { return }
-                Unmanaged<IOUSBHostTransport>.fromOpaque(context).takeUnretainedValue().handleRemoved(iterator)
-            }, context, &removalIterator
-        )
-        guard removalResult == kIOReturnSuccess else {
-            throw HIDTransportError.openFailed(removalResult)
+        for (vendorID, productIDs) in vendors {
+            var iterator: io_iterator_t = 0
+            let result = IOServiceAddMatchingNotification(
+                port, kIOTerminatedNotification,
+                Self.makeMatchingDictionary(vendorID: vendorID, productIDs: productIDs),
+                { context, iterator in
+                    guard let context else { return }
+                    Unmanaged<IOUSBHostTransport>.fromOpaque(context).takeUnretainedValue().handleRemoved(iterator)
+                }, context, &iterator
+            )
+            guard result == kIOReturnSuccess else {
+                throw HIDTransportError.openFailed(result)
+            }
+            removalIterators.append(iterator)
+            handleRemoved(iterator)
         }
-        handleRemoved(removalIterator)
     }
 
     /// Tears down the iterators, the port and the devices in one
@@ -95,14 +120,11 @@ public final class IOUSBHostTransport: HIDTransport {
     /// and destroys its device instead of adding it.
     public func close() {
         queue.sync {
-            if matchIterator != 0 {
-                IOObjectRelease(matchIterator)
-                matchIterator = 0
+            for iterator in matchIterators + removalIterators {
+                IOObjectRelease(iterator)
             }
-            if removalIterator != 0 {
-                IOObjectRelease(removalIterator)
-                removalIterator = 0
-            }
+            matchIterators = []
+            removalIterators = []
             if let notificationPort {
                 IONotificationPortDestroy(notificationPort)
             }
@@ -139,7 +161,7 @@ public final class IOUSBHostTransport: HIDTransport {
     }
 
     /// Sends a header-packet control transfer to every currently matched
-    /// QuadCast USB device and reports the raw `IOReturn` for each,
+    /// USB function and reports the raw `IOReturn` for each,
     /// regardless of success. This is the hardware bring-up diagnostic
     /// (`macmic-cli probe`); unlike `sendFeatureReport`, it does not stop at
     /// the first success and is not exercised by unit tests.
@@ -155,7 +177,10 @@ public final class IOUSBHostTransport: HIDTransport {
             }
             return candidates.map { candidate in
                 let result = Self.sendControlTransfer(QuadcastPacket.headerPacket(), to: candidate.handle)
-                return USBProbeResult(productID: candidate.productID, ioReturn: result)
+                return USBProbeResult(
+                    vendorID: candidate.vendorID, productID: candidate.productID,
+                    productName: candidate.productName, ioReturn: result
+                )
             }
         }
     }
@@ -186,7 +211,9 @@ public final class IOUSBHostTransport: HIDTransport {
         }
     }
 
-    private static func makeMatchingDictionary() -> CFDictionary {
+    /// A fresh dictionary per call: `IOServiceAddMatchingNotification`
+    /// consumes the one it is given.
+    private static func makeMatchingDictionary(vendorID: Int, productIDs: [Int]) -> CFDictionary {
         IOUSBHostDevice.__createMatchingDictionary(
             withVendorID: vendorID as NSNumber, productID: nil, bcdDevice: nil,
             deviceClass: nil, deviceSubclass: nil, deviceProtocol: nil, speed: nil,
@@ -202,14 +229,21 @@ public final class IOUSBHostTransport: HIDTransport {
             guard let device = try? IOUSBHostDevice(
                 __ioService: service, options: [.deviceSeize], queue: nil, interestHandler: nil
             ) else { continue }
+            let vendorID = Int(device.deviceDescriptor?.pointee.idVendor ?? 0xFFFF)
             let productID = Int(device.deviceDescriptor?.pointee.idProduct ?? 0xFFFF)
+            let productName = IORegistryEntryCreateCFProperty(
+                service, kUSBHostDevicePropertyProductString as CFString, kCFAllocatorDefault, 0
+            )?.takeRetainedValue() as? String
             queue.async { [weak self] in
                 guard let self, self.notificationPort != nil else {
                     device.destroy()
                     return
                 }
-                self.functions.insert(device, entryID: entryID, productID: productID)?.destroy()
-                DispatchQueue.main.async { self.onDeviceConnected?() }
+                self.functions.insert(
+                    device, entryID: entryID, vendorID: vendorID, productID: productID, productName: productName
+                )?.destroy()
+                let name = self.functions.displayName ?? QuadcastCatalog.genericName
+                DispatchQueue.main.async { self.onDeviceConnected?(name) }
             }
         }
     }
@@ -220,10 +254,14 @@ public final class IOUSBHostTransport: HIDTransport {
             var entryID: UInt64 = 0
             IORegistryEntryGetRegistryEntryID(service, &entryID)
             queue.async { [weak self] in
-                guard let self, let removal = self.functions.remove(entryID: entryID) else { return }
+                guard let self else { return }
+                let previousName = self.functions.displayName
+                guard let removal = self.functions.remove(entryID: entryID) else { return }
                 removal.handle.destroy()
                 if removal.isEmpty {
                     DispatchQueue.main.async { self.onDeviceRemoved?() }
+                } else if let name = self.functions.displayName, name != previousName {
+                    DispatchQueue.main.async { self.onDeviceNameChanged?(name) }
                 }
             }
         }

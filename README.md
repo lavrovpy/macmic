@@ -1,6 +1,6 @@
 # MacMic
 
-A native macOS menu bar app for the HyperX QuadCast S — RGB lighting, audio controls, and a live microphone test. HyperX only ships NGENUITY for Windows, leaving the mic on its default rainbow on macOS; MacMic fills that gap.
+A native macOS menu bar app for HyperX microphones that use the QuadCast S lighting protocol — the Kingston-era QuadCast S, plus the HP-era models under [Supported devices](#supported-devices) (untested) — with RGB lighting, audio controls, and a live microphone test. HyperX only ships NGENUITY for Windows, leaving the mic on its default rainbow on macOS; MacMic fills that gap.
 
 <p align="center">
   <img src="docs/screenshots/lighting.png" alt="MacMic's Lighting page: lighting on/off switch, Solid / Rainbow Cycle / Blink mode picker, color swatches with RGB sliders and a hex field, and brightness" width="49%">
@@ -13,6 +13,20 @@ A native macOS menu bar app for the HyperX QuadCast S — RGB lighting, audio co
 - **Audio controls** — Microphone gain & mute and headphone-monitoring volume & mute, backed by Core Audio and kept in live sync with the mic's physical gain knob and System Settings → Sound.
 - **Test Microphone** — Hear the mic live through your Mac's current output (AirPods, headphones, speakers) with an input level meter, or record up to 30 seconds in memory and play it back without plugging headphones into the mic itself. *(Use headphones for live pass-through to avoid speaker feedback.)*
 - **Menu bar app** — Lives in the menu bar with no Dock icon (shows a slashed mic while muted), quick toggles for lighting, mode, and mute, and a single window (`⌘,`) for full Lighting and Audio controls.
+
+## Supported devices
+
+| Model | USB VID:PID | Role | Source | Tested on hardware |
+|---|---|---|---|---|
+| QuadCast S (Kingston) | `0951:171F` + `0951:171D` | lighting + audio | QuadcastRGB; this project | Yes |
+| QuadCast S (HP revisions) | `03F0:0F8B` / `028C` / `048C` / `068C` | lighting | QuadcastRGB `devio.c` | No |
+| DuoCast per QuadcastRGB; QuadCast S per CastGlow | `03F0:098C` | lighting | QuadcastRGB `devio.c`, CastGlow README | No |
+| QuadCast 2 | `03F0:09AF` | lighting | QuadcastRGB `devio.c` | No |
+| QuadCast S (HP) | `03F0:0294` | audio | [CastGlow](https://github.com/chattydogmagazine/castglow) README (third-party, unverified) | No |
+
+Audio controls and Test Microphone work on an HP model only if Core Audio reports a ModelUID with one of these IDs; no HP audio ID other than `0294` is known.
+
+The **QuadCast 2S** (`03F0:02B5`) is not supported: it uses a different 108-LED protocol.
 
 ## Install & Build
 
@@ -49,7 +63,7 @@ MACMIC_SIGN_IDENTITY="Developer ID Application: <name> (<team id>)" \
 `macmic-cli` exposes lighting, audio controls, and hardware diagnostics from the terminal:
 
 ```sh
-swift run macmic-cli probe                      # check matched USB functions and control transfers
+swift run macmic-cli probe                      # list matched HyperX USB functions, their product strings, and which accept control transfers
 swift run macmic-cli solid FF0000               # stream solid color until Ctrl-C (--brightness 0.0-1.0)
 swift run macmic-cli cycle --speed 50           # rainbow cycle (--speed 0-100, --brightness 0.0-1.0)
 swift run macmic-cli blink FF0000 0000FF        # blink through colors (--speed 0-100, --brightness 0.0-1.0)
@@ -62,18 +76,17 @@ swift run macmic-cli audio test --record 3      # record 3 s of the mic, play it
 
 ## How It Works
 
-- **Lighting (`IOUSBHost`)** — The QuadCast S has no onboard color memory; stopping the stream returns it to its default rainbow. `FrameStreamer` sends precomputed 64-byte header + RGB data packets every 55 ms. Because macOS's `IOHIDManager` cannot reach the mic's `0xFF0B` vendor usage page, `IOUSBHostTransport` seizes the USB device and sends raw `SET_REPORT` control transfers directly to PID `0x171f`.
-- **Audio (`CoreAudio` HAL)** — Gain, mute, and headphone monitoring are standard USB Audio properties on PID `0x171d` (enumerated by macOS as separate 2-channel input and output devices), observed live and tracked independently of the lighting transport.
-- **Test Microphone (`AVAudioEngine`)** — On macOS, `AVAudioEngine`'s input and output share a single HAL unit, so MacMic builds a private aggregate device pairing the QuadCast input with the system default output (rebuilding automatically when the output changes) and taps the input in memory for metering and clip recording.
+- **Lighting (`IOUSBHost`)** — The mic has no onboard color memory; stopping the stream returns it to its default rainbow. `FrameStreamer` sends precomputed 64-byte header + RGB data packets every 55 ms. Because macOS's `IOHIDManager` cannot reach the mic's `0xFF0B` vendor usage page, `IOUSBHostTransport` seizes the USB device and sends raw `SET_REPORT` control transfers directly to the mic's lighting USB function (see [Supported devices](#supported-devices)).
+- **Audio (`CoreAudio` HAL)** — Gain, mute, and headphone monitoring are standard USB Audio properties, observed live and tracked independently of the lighting transport. The mic's Core Audio devices are matched by the USB IDs in their ModelUID against the same list; a model may expose one device for both directions or two (the Kingston QuadCast S has separate 2-channel input and output devices on `0x171d`).
+- **Test Microphone (`AVAudioEngine`)** — On macOS, `AVAudioEngine`'s input and output share a single HAL unit, so MacMic builds a private aggregate device pairing the mic's input with the system default output (rebuilding automatically when the output changes) and taps the input in memory for metering and clip recording.
 
 For module architecture, conventions, and full hardware notes, see [`CLAUDE.md`](CLAUDE.md).
 
 ## Known Limitations
 
-- Tested only on the **HyperX QuadCast S** (VID `0x0951`, PID `0x171f` / `0x171d`); QuadCast 2/2S and DuoCast are untested.
 - Whole-mic color only (upper and lower zones match); no wave, lightning, or pulse presets; no launch-at-login yet.
 - Polar pattern is a physical knob on the microphone and cannot be set in software.
-- Test Microphone pins the mic's sample rate to match the output device (typically 48 kHz). If a Bluetooth headset (e.g. AirPods) is set as the macOS default *input*, starting the test can switch the headset into hands-free mode and interrupt capture — set the QuadCast S as the default input in System Settings → Sound to avoid this.
+- Test Microphone pins the mic's sample rate to match the output device (typically 48 kHz). If a Bluetooth headset (e.g. AirPods) is set as the macOS default *input*, starting the test can switch the headset into hands-free mode and interrupt capture — set the HyperX mic as the default input in System Settings → Sound to avoid this.
 - Unsandboxed by necessity (USB device seizure + private aggregate audio devices) and distributed outside the Mac App Store.
 
 ## Credits & License

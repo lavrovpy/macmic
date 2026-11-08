@@ -98,6 +98,93 @@ import Testing
         #expect(fixture.control.snapshot.deviceIDs == [.input: 80, .output: Self.outputID])
     }
 
+    private static func device(modelUID: String?, name: String?, id: AudioObjectID = 90, input: Int = 2, output: Int = 2) -> FakeHAL.Device {
+        var device = FakeHAL.Device.combined(id: id, input: input, output: output)
+        device.modelUID = modelUID
+        device.name = name
+        return device
+    }
+
+    @Test(arguments: QuadcastCatalog.functions)
+    func everyCatalogFunctionMatchesByModelUID(_ function: QuadcastUSBFunction) throws {
+        let modelUID = String(format: "HyperX:%04X:%04X", function.vendorID, function.productID)
+        let fixture = try Self.openedFixture(devices: [Self.device(modelUID: modelUID, name: "HyperX")])
+
+        #expect(fixture.control.snapshot.deviceIDs == [.input: 90, .output: 90])
+    }
+
+    @Test func aSingleHPDeviceServesBothDirections() throws {
+        let fixture = try Self.openedFixture(devices: [
+            Self.device(modelUID: "HyperX QuadCast 2:03F0:09AF", name: "HyperX QuadCast 2", input: 1, output: 2),
+        ])
+        #expect(fixture.control.snapshot.deviceIDs == [.input: 90, .output: 90])
+        #expect(fixture.control.snapshot.deviceName == "HyperX QuadCast 2")
+        #expect(fixture.hal.liveListeners == Self.expectedListeners(input: 90, output: 90))
+
+        try fixture.control.setVolume(0.5, for: .input)
+        try fixture.control.setVolume(0.25, for: .output)
+
+        #expect(fixture.hal.writes == [
+            Self.volumeWrite(90, Self.inputScope, element: 1, 0.5),
+            Self.volumeWrite(90, Self.outputScope, element: 1, 0.25),
+            Self.volumeWrite(90, Self.outputScope, element: 2, 0.25),
+        ])
+    }
+
+    @Test func quadcast2SAndUncataloguedHyperXDevicesAreIgnored() throws {
+        let fixture = try Self.openedFixture(devices: [
+            Self.device(modelUID: "HyperX QuadCast 2S:03F0:02B5", name: "HyperX QuadCast 2S", id: 60),
+            Self.device(modelUID: "HyperX Cloud:0951:1234", name: "HyperX Cloud", id: 61),
+            Self.device(modelUID: "HyperX:03F0:0295", name: "HyperX", id: 62),
+            Self.device(modelUID: nil, name: "HyperX QuadCast 2S", id: 63),
+        ])
+
+        #expect(fixture.control.snapshot.isIdentical(to: .unavailable))
+        #expect(fixture.control.snapshot.deviceName == nil)
+        #expect(fixture.hal.liveListeners == Self.expectedListeners(input: nil, output: nil))
+    }
+
+    @Test func deviceNameComesFromTheInputDeviceThenTheOutput() throws {
+        var input = FakeHAL.Device.quadcastInput(id: Self.inputID)
+        input.name = "Mic A"
+        var output = FakeHAL.Device.quadcastOutput(id: Self.outputID)
+        output.name = "Mic B"
+        let fixture = try Self.openedFixture(devices: [output, input])
+        #expect(fixture.control.snapshot.deviceName == "Mic A")
+        #expect(fixture.deliveries.last?.deviceName == "Mic A")
+
+        fixture.hal.unplug(Self.inputID)
+        fixture.settle()
+        #expect(fixture.deliveries.last?.deviceName == "Mic B")
+
+        fixture.hal.unplugAll()
+        fixture.settle()
+        #expect(fixture.deliveries.last?.deviceName == nil)
+    }
+
+    @Test func blankDeviceNameFallsBackToTheCatalogName() throws {
+        let quadcast2 = try Self.openedFixture(devices: [Self.device(modelUID: "HyperX:03F0:09AF", name: "")])
+        #expect(quadcast2.control.snapshot.deviceName == "HyperX QuadCast 2")
+
+        let duoCast = try Self.openedFixture(devices: [Self.device(modelUID: "HyperX:03F0:098C", name: nil)])
+        #expect(duoCast.control.snapshot.deviceName == "HyperX DuoCast")
+    }
+
+    @Test func renameUnderTheSameIDsIsDelivered() throws {
+        let fixture = try Self.openedFixture()
+        let added = fixture.hal.addedListenerCount
+        var renamed = FakeHAL.Device.quadcastInput(id: Self.inputID)
+        renamed.name = "Renamed"
+
+        fixture.hal.replace(renamed)
+        fixture.settle()
+
+        #expect(fixture.deliveries.count == 2)
+        #expect(fixture.deliveries.last?.deviceName == "Renamed")
+        #expect(fixture.deliveries.last?.deviceIDs == [.input: Self.inputID, .output: Self.outputID])
+        #expect(fixture.hal.addedListenerCount == added)
+    }
+
     // MARK: Listeners across rescans
 
     @Test func unrelatedDeviceChangesDeliverNothingAndKeepListeners() throws {
@@ -382,14 +469,5 @@ import Testing
 
         #expect(fixture.deliveries.count == 2)
         #expect(fixture.deliveries.last?.input?.volume == 0.3)
-    }
-
-    @Test func usbIDsMatchTheLightingTransportsProductList() {
-        #expect(IOUSBHostTransport.vendorID == CoreAudioDeviceControl.usbVendorID)
-        #expect(IOUSBHostTransport.productIDs.contains(CoreAudioDeviceControl.usbProductID))
-        let suffix = String(
-            format: ":%04x:%04x", CoreAudioDeviceControl.usbVendorID, CoreAudioDeviceControl.usbProductID
-        )
-        #expect(CoreAudioDeviceControl.modelUIDSuffix == suffix)
     }
 }

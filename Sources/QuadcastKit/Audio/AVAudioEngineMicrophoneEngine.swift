@@ -340,22 +340,43 @@ private extension AVAudioEngineMicrophoneEngine {
         guard let outputUID = hal.string(output, kAudioDevicePropertyDeviceUID) else {
             return .failure(.engineFailed("default output device has no UID"))
         }
-        let description: [String: Any] = [
-            kAudioAggregateDeviceNameKey: Self.aggregateDeviceName,
-            kAudioAggregateDeviceUIDKey: "dev.alavreniuk.macmic.mictest.\(UUID().uuidString)",
-            kAudioAggregateDeviceIsPrivateKey: 1,
-            kAudioAggregateDeviceIsStackedKey: 0,
-            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
-            kAudioAggregateDeviceSubDeviceListKey: [
-                [kAudioSubDeviceUIDKey: inputUID, kAudioSubDeviceDriftCompensationKey: 1, kAudioSubDeviceOutputChannelsKey: 0],
-                [kAudioSubDeviceUIDKey: outputUID, kAudioSubDeviceInputChannelsKey: 0],
-            ],
-        ]
+        let description = Self.aggregateDescription(
+            inputUID: inputUID, outputUID: outputUID,
+            aggregateUID: "dev.alavreniuk.macmic.mictest.\(UUID().uuidString)"
+        )
         var aggregate = AudioObjectID(kAudioObjectUnknown)
         let status = AudioHardwareCreateAggregateDevice(description as CFDictionary, &aggregate)
         guard status == noErr, aggregate != kAudioObjectUnknown else {
             return .failure(.engineFailed("could not create aggregate device (\(status))"))
         }
         return .success(aggregate)
+    }
+}
+
+extension AVAudioEngineMicrophoneEngine {
+    /// The `AudioHardwareCreateAggregateDevice` description for
+    /// `createAggregateDevice`.
+    ///
+    /// When the mic is one Core Audio device with both directions and is
+    /// also the default output (headphones in the mic's own jack), it joins
+    /// once with both directions: listing one UID twice, each entry with a
+    /// direction switched off, leaves the aggregate without input or output.
+    /// Not run on hardware: the Kingston QuadCast S's monitoring output is a
+    /// separate device.
+    static func aggregateDescription(inputUID: String, outputUID: String, aggregateUID: String) -> [String: Any] {
+        let subDevices: [[String: Any]] = inputUID == outputUID
+            ? [[kAudioSubDeviceUIDKey: outputUID]]
+            : [
+                [kAudioSubDeviceUIDKey: inputUID, kAudioSubDeviceDriftCompensationKey: 1, kAudioSubDeviceOutputChannelsKey: 0],
+                [kAudioSubDeviceUIDKey: outputUID, kAudioSubDeviceInputChannelsKey: 0],
+            ]
+        return [
+            kAudioAggregateDeviceNameKey: aggregateDeviceName,
+            kAudioAggregateDeviceUIDKey: aggregateUID,
+            kAudioAggregateDeviceIsPrivateKey: 1,
+            kAudioAggregateDeviceIsStackedKey: 0,
+            kAudioAggregateDeviceMainSubDeviceKey: outputUID,
+            kAudioAggregateDeviceSubDeviceListKey: subDevices,
+        ]
     }
 }

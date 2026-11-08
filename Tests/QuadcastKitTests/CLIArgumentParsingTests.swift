@@ -6,6 +6,7 @@
 // the Free Software Foundation, version 2 of the License ONLY.
 // See LICENSE for the full license text.
 
+import IOKit
 import Testing
 @testable import macmic_cli
 @testable import QuadcastKit
@@ -187,5 +188,36 @@ import Testing
             input  (microphone): not found
             output (monitoring): not found
             """)
+    }
+
+    @Test func formatAudioStatusNamesTheDevice() {
+        var snapshot = AudioDeviceSnapshot.sample
+        snapshot.deviceName = "HyperX QuadCast S"
+        #expect(formatAudioStatus(snapshot) == """
+            device: HyperX QuadCast S
+            input  (microphone): gain 68% (+2.1 dB), mute off
+            output (monitoring): volume 81% (-12.1 dB), mute off
+            """)
+    }
+
+    @Test func formatProbeResultShowsIDsRoleAndProductString() {
+        let result = USBProbeResult(
+            vendorID: 0x0951, productID: 0x171f, productName: "HyperX QuadCast S", ioReturn: kIOReturnSuccess
+        )
+        #expect(formatProbeResult(result) == "  0951:171f  lighting  HyperX QuadCast S  SET_REPORT(header) -> 0 (OK)")
+    }
+
+    @Test func formatProbeResultMarksMissingStringAndFailure() {
+        let result = USBProbeResult(vendorID: 0x03f0, productID: 0x0294, productName: nil, ioReturn: kIOReturnError)
+        let line = formatProbeResult(result)
+        #expect(line.contains("03f0:0294"))
+        #expect(line.contains("audio"))
+        #expect(line.contains("(no product string)"))
+        #expect(line.contains("(FAILED)"))
+    }
+
+    @Test func formatProbeResultMarksUncataloguedFunctionsAndBlankStrings() {
+        let result = USBProbeResult(vendorID: 0x03f0, productID: 0x02b5, productName: "  ", ioReturn: kIOReturnError)
+        #expect(formatProbeResult(result).hasPrefix("  03f0:02b5  unknown  (no product string)  "))
     }
 }

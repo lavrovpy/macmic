@@ -42,6 +42,8 @@ final class MockAudioDeviceControl: AudioDeviceControl {
     /// the HAL's listener echo. Set `false` to test the optimistic path in
     /// isolation.
     var echoesWrites = true
+    /// Attached to every snapshot with a present direction, like the ids.
+    var deviceName: String? = "HyperX QuadCast S"
 
     private let observers = AudioObservers()
     /// The levels the device holds, open or not; ids are attached on read.
@@ -54,6 +56,7 @@ final class MockAudioDeviceControl: AudioDeviceControl {
         var result = AudioDeviceSnapshot(input: levels.input, output: levels.output)
         if result.input != nil { result.deviceIDs[.input] = inputID }
         if result.output != nil { result.deviceIDs[.output] = outputID }
+        if result.isAvailable { result.deviceName = deviceName }
         return result
     }
 

@@ -21,6 +21,12 @@ struct MenuBarMenu: View {
 
     var body: some View {
         Text(lighting.statusText)
+        // Lighting and audio are separate USB functions, so the mic's audio
+        // can be present while lighting isn't (e.g. another process holds the
+        // lighting function); name it rather than leave only "not found".
+        if !lighting.isDevicePresent && audio.isAvailable {
+            Text(audio.statusText)
+        }
 
         Toggle("Lighting Enabled", isOn: $lighting.settings.isEnabled)
             .disabled(!lighting.controlsEnabled)

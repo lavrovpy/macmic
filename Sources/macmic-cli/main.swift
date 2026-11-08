@@ -32,7 +32,7 @@ func fail(_ message: String) -> Never {
 }
 
 /// Opens the transport and gives the async device-matching notification a
-/// moment to enumerate already-connected QuadCast USB devices before we act
+/// moment to enumerate already-connected HyperX USB functions before we act
 /// on them.
 func openAndWaitForEnumeration() -> IOUSBHostTransport {
     let transport = IOUSBHostTransport()
@@ -175,13 +175,11 @@ case "probe":
     let transport = openAndWaitForEnumeration()
     do {
         let results = try transport.probe()
-        print("matched \(results.count) QuadCast USB device(s) (IOUSBHostTransport, raw control transfer):")
+        print("matched \(results.count) HyperX USB function(s) (IOUSBHostTransport, raw control transfer):")
         var anySucceeded = false
         for result in results {
             anySucceeded = anySucceeded || result.succeeded
-            let status = result.succeeded ? "OK" : "FAILED"
-            let pid = String(format: "0x%04x", result.productID)
-            print("  PID \(pid)  SET_REPORT(header) -> \(result.ioReturn) (\(status))")
+            print(formatProbeResult(result))
         }
         transport.close()
         exit(anySucceeded ? 0 : 1)

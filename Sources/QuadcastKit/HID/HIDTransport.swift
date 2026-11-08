@@ -8,19 +8,25 @@
 
 import IOKit
 
-/// Abstraction over the HID feature-report channel used to drive the
-/// QuadCast S display loop, so the streaming/mode logic in QuadcastKit can
+/// Abstraction over the HID feature-report channel used to drive a
+/// supported HyperX mic's display loop, so the streaming/mode logic in QuadcastKit can
 /// be tested without real hardware. `IOUSBHostTransport` is the production
 /// adapter (its doc says why it bypasses `IOHIDManager`); `MockHIDTransport`
 /// (test target) is used in unit tests.
 ///
-/// Both callbacks are delivered on the main thread.
+/// Every callback is delivered on the main thread.
 public protocol HIDTransport: AnyObject {
-    /// Invoked once per matched QuadCast USB function — twice for one mic,
-    /// including for a mic that is already plugged in when `open()` runs.
-    var onDeviceConnected: (() -> Void)? { get set }
-    /// Invoked once every matched QuadCast USB function is gone, not when
-    /// the first of them terminates.
+    /// Invoked once per matched USB function — twice for a Kingston
+    /// QuadCast S — including for a mic that is already plugged in when
+    /// `open()` runs. `deviceName` is `QuadcastFunctionSet.displayName` of
+    /// the matched set after that match.
+    var onDeviceConnected: ((_ deviceName: String) -> Void)? { get set }
+    /// Invoked when a function terminates while others remain and the
+    /// matched set's `displayName` changes as a result — e.g. one of two
+    /// plugged-in mics is unplugged. Not invoked when the name is unchanged.
+    var onDeviceNameChanged: ((_ deviceName: String) -> Void)? { get set }
+    /// Invoked once every matched USB function is gone, not when the first
+    /// of them terminates.
     var onDeviceRemoved: (() -> Void)? { get set }
 
     /// Starts watching for matching USB functions. Success does not mean a
@@ -38,7 +44,7 @@ public protocol HIDTransport: AnyObject {
 
 /// Errors surfaced by `HIDTransport` implementations.
 public enum HIDTransportError: Error, Equatable {
-    /// No QuadCast USB function is currently matched.
+    /// No supported USB function is currently matched.
     case deviceNotFound
     /// Registering the matching notifications failed with this `IOReturn`.
     case openFailed(IOReturn)

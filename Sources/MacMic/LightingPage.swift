@@ -33,7 +33,7 @@ struct LightingPage: View {
                 Section {
                     Toggle("Lighting enabled", isOn: $lighting.settings.isEnabled)
                 } footer: {
-                    Text("The QuadCast S does not remember its colors. MacMic keeps sending frames while it runs, so the lighting returns to the mic's default when MacMic quits or lighting is off.")
+                    Text("The microphone does not remember its colors. MacMic keeps sending frames while it runs, so the lighting returns to the mic's default when MacMic quits or lighting is off.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
